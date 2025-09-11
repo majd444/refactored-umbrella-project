@@ -263,3 +263,48 @@ export const create = mutation({
     }
   },
 })
+
+export const remove = mutation({
+  args: { id: v.id("agents") },
+  handler: async (ctx, args) => {
+    // Auth check
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const agent = await ctx.db.get(args.id);
+    if (!agent) {
+      throw new ConvexError("Agent not found");
+    }
+
+    // Ownership check
+    if (agent.userId !== identity.subject) {
+      throw new ConvexError("Not authorized to delete this agent");
+    }
+
+    await ctx.db.delete(args.id);
+    return { success: true } as const;
+  }
+});
+
+// Public agent fetch for chat widget (no auth required). Returns only safe fields.
+export const getPublic = query({
+  args: { id: v.id("agents") },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.id);
+    if (!agent) return null;
+    // Expose only the fields needed by the widget
+    return {
+      _id: agent._id,
+      name: agent.name || "",
+      welcomeMessage: agent.welcomeMessage || "",
+      systemPrompt: agent.systemPrompt || "You are a helpful AI assistant.",
+      temperature: typeof agent.temperature === "number" ? agent.temperature : 0.7,
+      headerColor: agent.headerColor,
+      accentColor: agent.accentColor,
+      backgroundColor: agent.backgroundColor,
+      profileImage: agent.profileImage,
+    };
+  }
+});

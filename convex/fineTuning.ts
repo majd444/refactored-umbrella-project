@@ -1,15 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
-type FineTuningOutput = {
-  userId: string;
-  agentId: string;
-  input: string;
-  output: string;
-  metadata?: Record<string, any>;
-  createdAt: number;
-};
-
 // Save fine-tuning output
 export const saveFineTuningOutput = mutation({
   args: {
@@ -83,5 +74,21 @@ export const deleteFineTuningOutput = mutation({
     }
 
     await ctx.db.delete(args.id);
+  },
+});
+
+// Public: Get recent knowledge entries for an agent (no auth)
+export const getPublicAgentKnowledge = query({
+  args: {
+    agentId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const lim = Math.max(1, Math.min(100, args.limit ?? 20));
+    return await ctx.db
+      .query("fineTuningOutputs")
+      .withIndex("by_agent", (q) => q.eq("agentId", args.agentId))
+      .order("desc")
+      .take(lim);
   },
 });

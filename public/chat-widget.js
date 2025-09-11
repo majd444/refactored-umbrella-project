@@ -18,7 +18,10 @@
     
     // Find this script tag
     const scripts = document.getElementsByTagName("script");
-    const self = [...scripts].find(s => (s.src || "").includes("chat-widget.js"));
+    const self = [...scripts].find(s => {
+      const src = s.src || "";
+      return src.includes("chat-widget.js") || src.includes("widget.js");
+    });
     if (!self) return "";
     
     try {
@@ -30,7 +33,22 @@
   }
 
   const API_BASE = getApiBase();
-  const elRoot = document.getElementById(WIDGET_ID);
+  let elRoot = document.getElementById(WIDGET_ID);
+  if (!elRoot) {
+    // Legacy/inline usage: auto-create the root if a script tag provides bot id
+    const scripts = document.getElementsByTagName("script");
+    const self = [...scripts].find(s => {
+      const src = s.src || "";
+      return src.includes("chat-widget.js") || src.includes("widget.js");
+    });
+    const agentFromScript = self?.dataset?.botId || self?.dataset?.agentId || "";
+    if (agentFromScript) {
+      elRoot = document.createElement("div");
+      elRoot.id = WIDGET_ID;
+      elRoot.dataset.agentId = agentFromScript;
+      document.body.appendChild(elRoot);
+    }
+  }
   if (!elRoot) return console.error("[chat-widget] Root div#chat-widget not found.");
 
   const agentId = elRoot.dataset.agentId;

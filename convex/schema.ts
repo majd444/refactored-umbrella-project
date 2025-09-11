@@ -81,4 +81,56 @@ export default defineSchema({
   })
   .index("by_agent", ["agentId", "userId"])
   .index("by_created", ["createdAt"]),
+
+  // Discord bot configuration per agent (sensitive)
+  // Note: token is stored here; ensure access is restricted in queries.
+  discordConfigs: defineTable({
+    agentId: v.id('agents'),
+    clientId: v.string(),
+    token: v.optional(v.string()),
+    botToken: v.optional(v.string()),
+    botStatus: v.optional(v.string()),
+    isActive: v.optional(v.boolean()),
+    lastSeen: v.optional(v.number()),
+    userId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+  .index('by_agent', ['agentId']),
+
+  // Telegram bot configuration per agent (sensitive)
+  // Note: token is stored here; ensure access is restricted in queries.
+  telegramConfigs: defineTable({
+    agentId: v.id('agents'),
+    botToken: v.string(),
+    botUsername: v.optional(v.string()),
+    webhookUrl: v.optional(v.string()),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+  .index('by_agent', ['agentId'])
+  ,
+
+  // Meta (Facebook Messenger / WhatsApp) configuration per agent
+  // Stores verification token and access credentials
+  metaConfigs: defineTable({
+    agentId: v.id('agents'),
+    // Platform can be 'messenger' or 'whatsapp'
+    platform: v.union(v.literal('messenger'), v.literal('whatsapp')),
+    // Verification token used for GET webhook verification
+    verifyToken: v.string(),
+    // App/page tokens
+    accessToken: v.string(),
+    // Optional: pageId for Messenger
+    pageId: v.optional(v.string()),
+    // Optional: phone number id for WhatsApp Cloud API
+    whatsappPhoneNumberId: v.optional(v.string()),
+    // Webhook URL we applied (optional)
+    webhookUrl: v.optional(v.string()),
+    isActive: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+  .index('by_agent', ['agentId'])
 })

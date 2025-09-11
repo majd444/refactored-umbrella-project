@@ -4,8 +4,9 @@ import React, { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { X, RefreshCw, Upload, FileText, Globe, Trash2, Copy, Plus, Edit2, ChevronDown, Phone, User, Mail, Puzzle } from "lucide-react"
-import { useMutation } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
+import { Id } from "@/convex/_generated/dataModel"
 import { useUser } from "@clerk/nextjs"
 import { useToast } from "@/hooks/use-toast"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
@@ -16,9 +17,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Slider } from "@/components/ui/slider"
 import SimpleChatForm from "@/components/simple-chat-form"
 import ChatInterface from "@/components/chat-interface"
+import TelegramConfig from "@/components/TelegramConfig"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 
 // Interfaces
 interface CreateAgentModalProps {
@@ -39,8 +42,9 @@ interface ExtractedContent {
 // Constants
 const pluginLogos = [
   { id: "wordpress", name: "WordPress", logoUrl: "https://s.w.org/style/images/about/WordPress-logotype-wmark.png" },
+  { id: "shopify", name: "Shopify", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/0e/Shopify_logo_2018.svg" },
   { id: "whatsapp", name: "WhatsApp", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" },
-  { id: "html-css", name: "HTML & CSS Plugin", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg" },
+  { id: "html-css", name: "HTML", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg" },
   { id: "instagram", name: "Instagram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg" },
   { id: "messenger", name: "Meta", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/05/Facebook_Logo_%282019%29.png" },
   { id: "telegram", name: "Telegram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" },
@@ -56,6 +60,8 @@ const colorPalette = [
 function CreateAgentModal({ onClose }: CreateAgentModalProps) {
   const router = useRouter()
   const createAgent = useMutation(api.agents.create)
+  const updateAgent = useMutation(api.agents.update)
+  const saveFineTuning = useMutation(api.fineTuning.saveFineTuningOutput)
   const { user } = useUser()
   const { toast } = useToast()
 
@@ -87,6 +93,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [startPos, setStartPos] = useState({ x: 0, y: 0 })
   const [scale, setScale] = useState(1)
+  const [agentIdState, setAgentIdState] = useState<string | null>(null)
   const [formFields, setFormFields] = useState<Array<{
     id: string;
     type: string;
@@ -115,22 +122,65 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
     setError(null)
 
     try {
-      const response = await fetch('/api/extract-url', {
+      const response = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: extractionUrl }),
       })
       const responseData = await response.json()
 
-      if (!response.ok) throw new Error(responseData.error || 'Failed to extract content from URL')
+      if (!response.ok || responseData?.success === false) {
+        const msg = responseData?.error || `${response.status} ${response.statusText}`
+        throw new Error(msg || 'Failed to extract content from URL')
+      }
       if (!responseData.text && (!responseData.structured || responseData.structured.links.length === 0)) {
         throw new Error('No extractable content found on the page')
       }
 
+      // Prepare preview and capped content for saving
+      const MAX_SAVE_CHARS = 200_000
+      const textToSave = (responseData.text || '').slice(0, MAX_SAVE_CHARS)
+
       const newContent: ExtractedContent = {
         url: extractionUrl,
-        text: responseData.text,
+        text: textToSave,
         structured: responseData.structured || { tabs: [], inputs: [], buttons: [], links: [] },
+      }
+
+      // Save to knowledge base only if authenticated; ensure agent exists
+      if (user) {
+        try {
+          const agentId = await ensureAgentSaved()
+          const insertedId = await saveFineTuning({
+            agentId: String(agentId),
+            input: `url:${extractionUrl}`,
+            output: textToSave,
+            metadata: {
+              structured: responseData.structured,
+              source: 'edge-extract',
+              lengthOriginal: (responseData.text || '').length,
+            },
+          })
+          console.log('[create-agent] Saved fine-tuning entry:', String(insertedId))
+          toast({
+            className: 'bg-green-500 text-white',
+            title: 'Saved to Knowledge Base',
+            description: `Saved ${textToSave.length} chars from ${extractionUrl}`,
+          })
+        } catch (e) {
+          console.error('[create-agent] Save to knowledge base failed:', e)
+          toast({
+            className: 'bg-yellow-500 text-white',
+            title: 'Preview only',
+            description: 'Could not save to Knowledge Base. Content still available below.',
+          })
+        }
+      } else {
+        toast({
+          className: 'bg-blue-500 text-white',
+          title: 'Preview Ready',
+          description: 'Sign in to save extracted content to your Knowledge Base.',
+        })
       }
 
       setExtractedContents(prev => [...prev, newContent])
@@ -282,7 +332,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
         value: field.value || ''
       }));
 
-      console.log("[handleSave] Calling createAgent mutation with data:", {
+      console.log("[handleSave] Preparing agent payload:", {
         name: assistantName,
         welcomeMessage: welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`,
         systemPrompt: systemPrompt || "You are a helpful AI assistant.",
@@ -290,26 +340,43 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
         headerColor,
         accentColor,
         backgroundColor,
-        profileImage: profileImage || undefined,
         collectUserInfo,
         formFields: formFieldsData
       });
 
-      // Call the mutation
-      const agentId = await createAgent({
-        name: assistantName,
-        welcomeMessage: welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`,
-        systemPrompt: systemPrompt || "You are a helpful AI assistant.",
-        temperature,
-        headerColor,
-        accentColor,
-        backgroundColor,
-        profileImage: profileImage || undefined,
-        collectUserInfo,
-        formFields: formFieldsData
-      });
-
-      console.log("[handleSave] Agent created successfully with ID:", agentId);
+      // If we already created an agent (e.g., during extraction), update it; otherwise create
+      let finalAgentId: string;
+      if (agentIdState) {
+        await updateAgent({
+          id: agentIdState as Id<"agents">,
+          name: assistantName,
+          welcomeMessage: welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`,
+          systemPrompt: systemPrompt || "You are a helpful AI assistant.",
+          temperature,
+          headerColor,
+          accentColor,
+          backgroundColor,
+          collectUserInfo,
+          formFields: formFieldsData
+        });
+        finalAgentId = agentIdState;
+        console.log("[handleSave] Agent updated successfully:", finalAgentId);
+      } else {
+        const createdId = await createAgent({
+          name: assistantName,
+          welcomeMessage: welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`,
+          systemPrompt: systemPrompt || "You are a helpful AI assistant.",
+          temperature,
+          headerColor,
+          accentColor,
+          backgroundColor,
+          collectUserInfo,
+          formFields: formFieldsData
+        });
+        finalAgentId = String(createdId);
+        setAgentIdState(finalAgentId);
+        console.log("[handleSave] Agent created successfully with ID:", finalAgentId);
+      }
       
       // Show success message
       toast({
@@ -318,8 +385,8 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
         description: "Agent created successfully",
       });
 
-      // Redirect to the new agent's page
-      router.push(`/agent/${agentId}`);
+      // Redirect to the agent's page (updated or created)
+      router.push(`/agent/${finalAgentId}`);
       
     } catch (error) {
       console.error("[handleSave] Error creating agent:", error);
@@ -353,6 +420,52 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
       </div>
     );
   };
+
+  // Ensure an agent exists and return its ID (no redirect). Used by Plugins tab when clicking HTML & CSS card.
+  const ensureAgentSaved = async (): Promise<string> => {
+    if (agentIdState) return agentIdState;
+
+    if (!user) {
+      toast({
+        className: "bg-destructive text-destructive-foreground",
+        title: "Authentication Error",
+        description: "You must be logged in to save an agent",
+      });
+      throw new Error("Not authenticated");
+    }
+    if (!assistantName?.trim()) {
+      toast({
+        className: "bg-destructive text-destructive-foreground",
+        title: "Validation Error",
+        description: "Please provide a name for your agent",
+      });
+      throw new Error("Missing agent name");
+    }
+
+    const formFieldsData = formFields.map(field => ({
+      id: field.id,
+      type: field.type,
+      label: field.label,
+      required: field.required,
+      value: field.value || ''
+    }));
+
+    const newId = await createAgent({
+      name: assistantName,
+      welcomeMessage: welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`,
+      systemPrompt: systemPrompt || "You are a helpful AI assistant.",
+      temperature,
+      headerColor,
+      accentColor,
+      backgroundColor,
+      profileImage: profileImage || undefined,
+      collectUserInfo,
+      formFields: formFieldsData
+    });
+    setAgentIdState(String(newId));
+    toast({ className: "bg-green-500 text-white", title: "Saved", description: "Agent saved for embedding." });
+    return String(newId);
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-white flex flex-col h-screen w-screen">
@@ -432,7 +545,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
               setScale={setScale}
               colorPalette={colorPalette}
             />
-            <PluginsTab plugins={pluginLogos} />
+            <PluginsTab plugins={pluginLogos} getAgentId={ensureAgentSaved} />
           </Tabs>
           {showError && (
             <Alert variant="destructive" className="mt-6 bg-amber-50 border-amber-200 text-amber-800">
@@ -1326,6 +1439,7 @@ const AvatarPreview: React.FC<AvatarPreviewProps> = ({
                   src={profileImage} 
                   alt="Profile preview"
                   fill
+                  sizes="100vw"
                   className="object-cover object-center block"
                   draggable={false}
                   onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
@@ -1461,49 +1575,157 @@ const ColorPicker: React.FC<ColorPickerProps> = ({
 
 interface PluginsTabProps {
   plugins: typeof pluginLogos
+  getAgentId: () => Promise<string>
 }
 
-const PluginsTab: React.FC<PluginsTabProps> = ({ plugins }) => (
-  <TabsContent value="plugins" className="space-y-6">
-    <div className="p-4 bg-gray-50 rounded-lg mb-4">
-      <h3 className="text-lg font-medium text-black">Available Plugins</h3>
-      <p className="text-sm text-black">Connect your chatbot with popular platforms and services to extend its functionality.</p>
-    </div>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {plugins.map((plugin) => (
-        <Card key={plugin.id}>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
+const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
+  const router = useRouter();
+  const [showEmbed, setShowEmbed] = React.useState(false)
+  const [snippet, setSnippet] = React.useState('<script src="https://fghjyy.vercel.app/chat-widget.js" data-bot-id="USER_BOT_ID"></script>')
+  const [isEmbedLoading, setIsEmbedLoading] = React.useState(false)
+  const [embedError, setEmbedError] = React.useState<string | null>(null)
+  const [embedTitle, setEmbedTitle] = React.useState('Embed Script')
+  const [showDiscord, setShowDiscord] = React.useState(false)
+  const [discordAgentId, setDiscordAgentId] = React.useState<string>('')
+  const [discordClientId, setDiscordClientId] = React.useState('')
+  const [discordToken, setDiscordToken] = React.useState('')
+  const [discordLoading, setDiscordLoading] = React.useState(false)
+  const [discordError, setDiscordError] = React.useState<string | null>(null)
+  const [discordSaved, setDiscordSaved] = React.useState(false)
+  const saveDiscordConfig = useMutation(api.discord.saveBotConfig)
+  
+  // Telegram state
+  const [showTelegram, setShowTelegram] = React.useState(false)
+  const [telegramAgentId, setTelegramAgentId] = React.useState<string>('')
+
+  // Load existing Discord config for this agent (when dialog is open and agent id is available)
+  // Only query when user is signed in to avoid Convex auth errors
+  const { isSignedIn } = useUser();
+  const myDiscordCfg = useQuery(
+    api.discord.getMyBotConfig,
+    (isSignedIn && showDiscord && discordAgentId)
+      ? { agentId: discordAgentId as Id<'agents'> }
+      : "skip"
+  )
+
+  React.useEffect(() => {
+    if (myDiscordCfg) {
+      if (typeof myDiscordCfg.clientId === 'string') setDiscordClientId(myDiscordCfg.clientId)
+      if (myDiscordCfg.hasToken) setDiscordSaved(true)
+    }
+  }, [myDiscordCfg])
+
+  const handleClick = async (pluginId: string) => {
+    if (pluginId === "wordpress") {
+      router.push('/integrations/wordpress');
+      return;
+    }
+    if (pluginId === "discord") {
+      try {
+        const id = await getAgentId()
+        setDiscordAgentId(id)
+        setDiscordError(null)
+        setDiscordSaved(false)
+        setShowDiscord(true)
+      } catch (err) {
+        console.error('Failed to get agent id for Discord', err)
+        setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
+      }
+      return;
+    }
+    if (pluginId === "telegram") {
+      try {
+        const id = await getAgentId()
+        setTelegramAgentId(id)
+        setShowTelegram(true)
+      } catch (e) {
+        console.error('Failed to ensure agent before opening Telegram config', e)
+      }
+      return;
+    }
+    if (pluginId === "shopify") {
+      setEmbedTitle('Shopify embed snippet')
+      setEmbedError(null)
+      setShowEmbed(true)
+      setIsEmbedLoading(true)
+      try {
+        const id = await getAgentId()
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://fghjyy.vercel.app'
+        setSnippet(`<script src="${origin}/widget.js" data-bot-id="${id}"></script>`)
+      } catch (err) {
+        console.error('Failed to get agent id for embed', err)
+        setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
+      } finally {
+        setIsEmbedLoading(false)
+      }
+      return;
+    }
+    if (pluginId === "html-css") {
+      setEmbedTitle('Embed Script')
+      setEmbedError(null)
+      setShowEmbed(true)
+      setIsEmbedLoading(true)
+      try {
+        const id = await getAgentId()
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://fghjyy.vercel.app'
+        setSnippet(`<script src="${origin}/chat-widget.js" data-bot-id="${id}"></script>`)
+      } catch (err) {
+        console.error('Failed to get agent id for embed', err)
+        setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
+      } finally {
+        setIsEmbedLoading(false)
+      }
+    }
+  }
+
+  const copySnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(snippet)
+    } catch (e) {
+      console.error('Failed to copy snippet', e)
+    }
+  }
+
+  return (
+    <TabsContent value="plugins" className="space-y-4">
+      <div className="p-3 bg-gray-50 rounded-lg mb-2">
+        <h3 className="text-base font-medium text-black">Available Plugins</h3>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {plugins.map((plugin) => (
+          <Card 
+            key={plugin.id}
+            onClick={() => handleClick(plugin.id)}
+            className={(plugin.id === 'html-css' || plugin.id === 'wordpress' || plugin.id === 'shopify' || plugin.id === 'discord' || plugin.id === 'telegram') ? 'cursor-pointer' : undefined}
+          >
+            <CardContent className="p-3">
               <div className="flex items-center">
-                <div className="h-10 w-10 rounded bg-white border flex items-center justify-center mr-3 p-1">
-                  <div className="relative h-10 w-10">
-                    <Image
-                      src={plugin.logoUrl || "/placeholder.svg"}
-                      alt={`${plugin.name} logo`}
-                      fill
-                      className="object-contain"
-                      onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = "none";
-                        const parent = target.parentElement;
-                        if (parent) {
-                          const span = document.createElement('span');
-                          span.className = "text-black font-bold text-sm";
-                          span.textContent = plugin.name.substring(0, 2).toUpperCase();
-                          parent.innerHTML = '';
-                          parent.appendChild(span);
-                          parent.className = "h-10 w-10 rounded bg-gray-100 flex items-center justify-center mr-3";
-                        }
-                      }}
-                    />
+                <div className="flex items-center">
+                  <div className="h-10 w-10 rounded bg-white border flex items-center justify-center mr-3 p-1">
+                    <div className="relative h-10 w-10">
+                      <Image
+                        alt={`${plugin.name} logo`}
+                        src={plugin.logoUrl}
+                        fill
+                        className="object-contain"
+                        sizes="40px"
+                        onError={(e) => {
+                          const parent = (e.target as HTMLImageElement).closest('div');
+                          if (parent) {
+                            (parent as HTMLDivElement).className = "h-10 w-10 rounded bg-gray-100 flex items-center justify-center mr-3";
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <h4 className="font-medium text-black">{plugin.name}</h4>
                   <p className="text-sm text-black">
                     {plugin.id === "wordpress" && "Embed chatbot on WordPress sites"}
+                    {plugin.id === "shopify" && "Shopify embed snippet"}
                     {plugin.id === "whatsapp" && "Connect via WhatsApp Business API"}
-                    {plugin.id === "html-css" && "Custom HTML/CSS integration"}
+                    {plugin.id === "html-css" && "HTML embed snippet"}
                     {plugin.id === "instagram" && "Instagram Direct Messages integration"}
                     {plugin.id === "messenger" && "Facebook Messenger integration via Meta"}
                     {plugin.id === "telegram" && "Telegram Bot API integration"}
@@ -1511,24 +1733,154 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins }) => (
                   </p>
                 </div>
               </div>
-              <Switch />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-    <div className="mt-6">
-      <h3 className="text-lg font-medium mb-4 text-black">Plugin Configuration</h3>
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <p className="text-sm text-black mb-3">Enable plugins above to configure their settings. Each plugin will require specific API keys or authentication tokens.</p>
-        <Button variant="outline" className="text-black">
-          <Puzzle className="mr-2 h-4 w-4" />
-          View Plugin Documentation
-        </Button>
+            </CardContent>
+          </Card>
+        ))}
       </div>
-    </div>
-  </TabsContent>
-)
+      <div className="mt-4">
+        <h3 className="text-base font-medium mb-2 text-black">Plugin Configuration</h3>
+        <div className="bg-gray-50 p-3 rounded-lg">
+          <p className="text-xs text-black mb-2">Enable plugins above to configure their settings. Each plugin may require API keys or authentication tokens.</p>
+          <Button variant="ghost" size="sm" className="text-black hover:bg-gray-100">
+            <Puzzle className="mr-2 h-4 w-4" />
+            View Plugin Documentation
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={showEmbed} onOpenChange={(open) => { setShowEmbed(open); if (!open) { setEmbedError(null); setEmbedTitle('Embed Script'); } }}>
+        <DialogContent className="max-w-3xl w-[90vw] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{embedTitle}</DialogTitle>
+            <DialogDescription>Copy and paste this into your website&apos;s HTML.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {isEmbedLoading ? (
+              <div className="flex items-center gap-2 text-sm text-black"><RefreshCw className="h-4 w-4 animate-spin" /> Preparing your embed...</div>
+            ) : embedError ? (
+              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">{embedError}</div>
+            ) : (
+              <pre className="bg-gray-100 text-black p-3 rounded overflow-auto text-sm whitespace-pre-wrap break-words">
+                <code>{snippet}</code>
+              </pre>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button onClick={copySnippet} variant="secondary" disabled={!!embedError || isEmbedLoading}>Copy</Button>
+              <Button onClick={() => setShowEmbed(false)}>Close</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDiscord} onOpenChange={(open) => { setShowDiscord(open); if (!open) { setDiscordError(null); setDiscordSaved(false); setDiscordClientId(''); setDiscordToken(''); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect Discord Bot</DialogTitle>
+            <DialogDescription>
+              Enter your Discord Application Client ID and Bot Token. We&apos;ll associate them with this agent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs">
+              <a
+                href="https://discord.com/developers/applications"
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Open Discord Developer Portal
+              </a>
+              {discordClientId?.trim() && (
+                <a
+                  href={`https://discord.com/developers/applications/${encodeURIComponent(discordClientId)}/bot`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  Open Bot Settings for this Client ID
+                </a>
+              )}
+            </div>
+            {discordLoading ? (
+              <div className="flex items-center gap-2 text-sm text-black"><RefreshCw className="h-4 w-4 animate-spin" /> Preparing Discord configuration...</div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-black mb-1">Agent ID</label>
+                  <Input value={discordAgentId} readOnly className="text-black" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-black mb-1">Discord Client ID</label>
+                  <Input value={discordClientId} onChange={(e) => setDiscordClientId(e.target.value)} placeholder="123456789012345678" className="text-black" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-black mb-1">Bot Token</label>
+                  <Input type="password" value={discordToken} onChange={(e) => setDiscordToken(e.target.value)} placeholder="Bot token" className="text-black" />
+                </div>
+                {discordError && (
+                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{discordError}</div>
+                )}
+                {discordSaved && (
+                  <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">Saved. Your Discord bot is linked to this agent.</div>
+                )}
+                
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    onClick={async () => {
+                      setDiscordError(null)
+                      setDiscordSaved(false)
+                      if (!discordClientId.trim() || !discordToken.trim()) {
+                        setDiscordError('Please enter both Client ID and Bot Token.')
+                        return
+                      }
+                      try {
+                        setDiscordLoading(true)
+                        // Persist to backend
+                        await saveDiscordConfig({
+                          agentId: discordAgentId as unknown as Id<'agents'>,
+                          clientId: discordClientId.trim(),
+                          token: discordToken.trim(),
+                        })
+                        setDiscordSaved(true)
+                        // Skipping Railway provisioning per project preference. Bot can be run via HTTPS interactions or external runner.
+                        // Build invite URL for convenience
+                        const clientId = encodeURIComponent(discordClientId.trim())
+                        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot%20applications.commands&permissions=3072`
+                        if (typeof window !== 'undefined') {
+                          window.open(inviteUrl, '_blank')
+                        }
+                      } catch (e) {
+                        console.error('Failed to save Discord config', e)
+                        setDiscordError(e instanceof Error ? e.message : 'Failed to save Discord configuration.')
+                      } finally {
+                        setDiscordLoading(false)
+                      }
+                    }}
+                  >
+                    Save
+                  </Button>
+                  <Button variant="secondary" onClick={() => setShowDiscord(false)}>Close</Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTelegram} onOpenChange={(open) => { setShowTelegram(open); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Configure Telegram Bot</DialogTitle>
+            <DialogDescription>
+              Set up your Telegram bot to automatically respond to messages.
+            </DialogDescription>
+          </DialogHeader>
+          <TelegramConfig agentId={telegramAgentId as Id<"agents">} />
+        </DialogContent>
+      </Dialog>
+    </TabsContent>
+  )
+}
 
 // Page Component
 const CreateAgentPage = () => {

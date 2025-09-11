@@ -14,6 +14,8 @@ const isPublicRoute = (pathname: string) => {
     '/',
     '/sign-in(.*)',
     '/sign-up(.*)',
+    // Telegram webhook must be public (Telegram cannot provide your app session)
+    '/api/telegram(.*)',
     '/api/webhooks(.*)',
     '/api/trpc(.*)',
     '/_next(.*)',

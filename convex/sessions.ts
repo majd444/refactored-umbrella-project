@@ -67,3 +67,21 @@ export const getSessionMessages = query({
       .collect();
   },
 });
+
+// Get the most recent session for a given agent and user
+export const getLatestByAgentAndUser = query({
+  args: {
+    agentId: v.id("agents"),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Query by userId (indexed), then filter by agentId
+    const sessions = await ctx.db
+      .query("chatSessions")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .order("desc")
+      .collect();
+
+    return sessions.find((s) => s.agentId === args.agentId) || null;
+  },
+});
