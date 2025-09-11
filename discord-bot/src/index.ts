@@ -128,8 +128,10 @@ process.on('uncaughtException', (err) => {
   })
 })()
 
-// Lightweight healthcheck HTTP server (defaults to a free port if none set)
-const port = Number(process.env.PORT ?? 0) || 0
+// Lightweight healthcheck HTTP server for individual bot workers.
+// IMPORTANT: Do NOT bind to the platform PORT env (used by the supervisor/container).
+// Use BOT_PORT if explicitly provided, otherwise 0 (random free port), to avoid EADDRINUSE when multiple bots spawn.
+const port = Number(process.env.BOT_PORT ?? 0) || 0
 const server = http.createServer((_req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify({ ok: true, agentId, appClientId }))
