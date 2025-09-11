@@ -3,7 +3,14 @@ import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
 
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
+// Lazily create Convex client at runtime to avoid build-time failures when env vars aren't present in CI
+function getConvexClient() {
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+  if (!convexUrl) {
+    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set. Please add it to your environment (e.g., https://YOUR-DEPLOYMENT.convex.cloud).')
+  }
+  return new ConvexHttpClient(convexUrl)
+}
 
 interface TelegramUpdate {
   update_id: number
@@ -70,6 +77,7 @@ async function sendTelegramMessage(botToken: string, chatId: number, text: strin
 // Generate AI response using the agent
 async function generateResponse(agentId: string, userMessage: string, userId: string, origin: string) {
   try {
+    const convex = getConvexClient()
     // Get agent details
     const agent = await convex.query(api.agents.getPublic, { id: agentId as Id<"agents"> })
     if (!agent) {
@@ -138,6 +146,7 @@ async function generateResponse(agentId: string, userMessage: string, userId: st
 
 export async function POST(request: Request) {
   try {
+    const convex = getConvexClient()
     const url = new URL(request.url)
     const origin = `${url.protocol}//${url.host}`
     // Derive agentId from the URL path: /api/telegram/webhook/[agentId]

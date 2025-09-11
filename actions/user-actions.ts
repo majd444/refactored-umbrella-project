@@ -4,11 +4,14 @@ import { auth } from "@clerk/nextjs/server"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
-if (!convexUrl) {
-  throw new Error('NEXT_PUBLIC_CONVEX_URL is not set. Please add it to your .env.local (e.g., https://effervescent-mandrill-295.convex.cloud).')
+// Lazily create Convex client at runtime to avoid build-time failures when env vars aren't present in CI
+function getConvexClient() {
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+  if (!convexUrl) {
+    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set. Please add it to your environment (e.g., https://YOUR-DEPLOYMENT.convex.cloud).')
+  }
+  return new ConvexHttpClient(convexUrl)
 }
-const convex = new ConvexHttpClient(convexUrl)
 
 export async function syncUser() {
   try {
@@ -34,6 +37,7 @@ export async function syncUser() {
       return { success: false, error: 'User not found' }
     }
     
+    const convex = getConvexClient()
     await convex.mutation(api.users.createOrUpdateUser, {
       userId: user.id,
       email: user.email_addresses[0]?.email_address,

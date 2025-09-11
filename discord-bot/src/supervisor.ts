@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import pino from 'pino'
 import { fetch as undiciFetch } from 'undici'
+import http from 'http'
 
 const log = pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -86,6 +87,18 @@ async function main() {
   await reconcile()
   const intervalMs = Number(process.env.SUPERVISOR_POLL_MS || 30000)
   setInterval(reconcile, intervalMs)
+
+  // Lightweight healthcheck HTTP server so PaaS (e.g., Railway) can mark us healthy
+  const port = Number(process.env.PORT ?? 0) || 0
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, processes: Array.from(processes.keys()) }))
+  })
+  server.listen(port, () => {
+    const addr = server.address()
+    const p = typeof addr === 'object' && addr ? addr.port : port
+    log.info({ port: p }, 'Supervisor healthcheck server listening')
+  })
 }
 
 process.on('unhandledRejection', (reason) => log.error({ reason }, 'UnhandledRejection'))
