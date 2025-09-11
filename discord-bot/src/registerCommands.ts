@@ -27,10 +27,10 @@ const rest = new REST({ version: '10' }).setToken(token)
 async function main() {
   try {
     if (guildId) {
-      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands })
+      await rest.put(Routes.applicationGuildCommands(clientId!, guildId!), { body: commands })
       console.log('Registered guild commands')
     } else {
-      await rest.put(Routes.applicationCommands(clientId), { body: commands })
+      await rest.put(Routes.applicationCommands(clientId!), { body: commands })
       console.log('Registered global commands (can take up to 1 hour to propagate)')
     }
   } catch (err) {
