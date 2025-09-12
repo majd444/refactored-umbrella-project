@@ -8,9 +8,6 @@
   if (!currentScript) return;
 
   var botId = currentScript.getAttribute('data-bot-id') || currentScript.getAttribute('data-agent-id');
-  var autoOpenAttr = currentScript.getAttribute('data-open');
-  var autoOpen = (autoOpenAttr === null || autoOpenAttr === undefined) ? true : (autoOpenAttr !== 'false');
-  var apiBase = currentScript.getAttribute('data-api-base') || '';
   if (!botId) {
     console.error('[Widget] Missing required data-bot-id attribute on script tag');
     return;
@@ -70,11 +67,7 @@
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = '0';
-  var src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
-  if (apiBase) {
-    src += '&apiBase=' + encodeURIComponent(apiBase);
-  }
-  iframe.src = src;
+  iframe.src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
 
   var isOpen = false;
   function open(){
@@ -114,11 +107,9 @@
       document.body.appendChild(toggleBtn);
     }
   }
-  function maybeOpen(){ if (autoOpen) try { open(); } catch(e) {} }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function(){ insertToggle(); maybeOpen(); });
+    document.addEventListener('DOMContentLoaded', insertToggle);
   } else {
     insertToggle();
-    maybeOpen();
   }
 })();
