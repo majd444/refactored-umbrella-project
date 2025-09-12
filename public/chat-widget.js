@@ -61,6 +61,9 @@
 
   const agentId = elRoot.dataset.agentId;
   if (!agentId) return console.error("[chat-widget] data-agent-id is required.");
+  if (!API_BASE) {
+    console.warn('[chat-widget] Missing API base. Provide data-api-base on script or #chat-widget, or configure env.');
+  }
 
   // Build UI
   elRoot.innerHTML = `
@@ -152,7 +155,8 @@
     }
 
     setStatus("Creating session…");
-    const url = `${API_BASE}/api/chat/widget/session`;
+    // Prefer same-origin proxy if available; otherwise use API_BASE
+    const url = (typeof location !== 'undefined' ? `${location.origin}/api/chat/widget/session` : '') || `${API_BASE}/api/chat/widget/session`;
     
     try {
       const res = await fetch(url, {
@@ -188,6 +192,7 @@
     if (!sessionId) {
       try { await ensureSession(); } catch { /* status already set */ }
     }
+    // Note: We can send via same-origin proxy even if API_BASE is empty
 
     isSending = true;
     sendEl.disabled = true;
@@ -201,9 +206,10 @@
     typing.textContent = "…";
     messagesEl.appendChild(typing);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+    setStatus('Sending…');
 
     try {
-      const url = `${API_BASE}/api/chat/widget/chat`;
+      const url = (typeof location !== 'undefined' ? `${location.origin}/api/chat/widget/chat` : '') || `${API_BASE}/api/chat/widget/chat`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -229,8 +235,9 @@
       setStatus("");
     } catch (err) {
       typing.remove();
-      bubble("assistant", "⚠️ " + (err?.message || "Request failed"));
-      setStatus("Error. Check console.");
+      const msg = err?.message || 'Request failed';
+      bubble("assistant", "⚠️ " + msg);
+      setStatus(msg);
       console.error("[chat-widget]", err);
     } finally {
       isSending = false;
