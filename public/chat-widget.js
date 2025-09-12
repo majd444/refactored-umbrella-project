@@ -178,10 +178,19 @@
     }
   }
 
+  let isSending = false;
+
   async function send() {
+    if (isSending) return;
     const text = (inputEl.value || "").trim();
     if (!text) return;
-    
+    // Ensure a session exists even if the panel wasn't opened via launcher
+    if (!sessionId) {
+      try { await ensureSession(); } catch { /* status already set */ }
+    }
+
+    isSending = true;
+    sendEl.disabled = true;
     inputEl.value = "";
     bubble("user", text);
     history.push({ role: "user", content: text });
@@ -223,6 +232,9 @@
       bubble("assistant", "⚠️ " + (err?.message || "Request failed"));
       setStatus("Error. Check console.");
       console.error("[chat-widget]", err);
+    } finally {
+      isSending = false;
+      sendEl.disabled = false;
     }
   }
 
@@ -273,4 +285,15 @@
       send(); 
     } 
   });
+
+  // Fallback: event delegation in case listeners fail to bind
+  try {
+    elRoot.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (t && (t.id === 'cw-send' || (t.closest && t.closest('#cw-send')))) {
+        ev.preventDefault();
+        send();
+      }
+    });
+  } catch {}
 })();
