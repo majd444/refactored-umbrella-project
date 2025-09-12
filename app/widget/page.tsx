@@ -21,8 +21,18 @@ export default function WidgetPage() {
             // Auto-open on load so the iframe shows the chat immediately
             (function(){
               function openNow(){
-                var launch = document.getElementById('cw-launch');
-                if (launch) { launch.click(); }
+                var tries = 0;
+                var tm = setInterval(function(){
+                  tries++;
+                  var launch = document.getElementById('cw-launch');
+                  if (launch) {
+                    try { launch.click(); } catch(e) {}
+                    clearInterval(tm);
+                  }
+                  if (tries > 50) { // ~5s max
+                    clearInterval(tm);
+                  }
+                }, 100);
               }
               if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', openNow);
