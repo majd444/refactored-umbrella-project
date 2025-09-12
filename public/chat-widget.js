@@ -15,7 +15,7 @@
     const el = document.getElementById(WIDGET_ID);
     const override = el?.dataset?.apiBase?.trim();
     if (override) return override.replace(/\/+$/, "");
-    
+
     // Find this script tag
     const scripts = document.getElementsByTagName("script");
     const self = [...scripts].find(s => {
@@ -23,7 +23,11 @@
       return src.includes("chat-widget.js") || src.includes("widget.js");
     });
     if (!self) return "";
-    
+
+    // Allow explicit override on the script tag as well
+    const scriptOverride = (self.dataset?.apiBase || "").trim();
+    if (scriptOverride) return scriptOverride.replace(/\/+$/, "");
+
     try {
       const url = new URL(self.src);
       return `${url.protocol}//${url.host}`;
@@ -46,6 +50,10 @@
       elRoot = document.createElement("div");
       elRoot.id = WIDGET_ID;
       elRoot.dataset.agentId = agentFromScript;
+      // Propagate apiBase if provided on script tag
+      if (self?.dataset?.apiBase) {
+        elRoot.dataset.apiBase = self.dataset.apiBase;
+      }
       document.body.appendChild(elRoot);
     }
   }

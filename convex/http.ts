@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { createWidgetSession, widgetChat } from "./chatWidget";
 import nacl from "tweetnacl";
 
 function corsResponse(json: unknown, status = 200) {
@@ -14,7 +15,9 @@ function corsResponse(json: unknown, status = 200) {
       'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
     },
   });
+
 }
+
 
 // --- Discord Interactions (HTTPS) ---
 // Verify incoming requests from Discord and respond to slash commands via HTTPS only.
@@ -184,26 +187,80 @@ async function generateAIResponseLocal(params: {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'user') return '...';
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return `AI (stub): ${last.content}`;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey && !openaiKey) return `You said: ${last.content}`;
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
-        'X-Title': 'Vaste Chatbot',
-      },
-      body: JSON.stringify({ model, temperature, messages }),
-    });
-    if (!res.ok) {
-      if (res.status === 401) return `AI (stub): ${last.content}`;
-      const t = await res.text().catch(() => '');
-      throw new Error(`OpenRouter error ${res.status}: ${t}`);
+    if (apiKey) {
+      const orModel = process.env.OPENROUTER_MODEL || model || 'openrouter/auto';
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000',
+          'X-Title': 'Vaste Chatbot',
+        },
+        body: JSON.stringify({ model: orModel, temperature, messages }),
+      });
+      if (!res.ok) {
+        const status = res.status;
+        const t = await res.text().catch(() => '');
+        console.error('[OpenRouter] non-OK', status, t?.slice(0, 200));
+        // Attempt OpenAI fallback if available
+        if (openaiKey) {
+          try {
+            const oa = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${openaiKey}`,
+              },
+              body: JSON.stringify({
+                model: model || 'gpt-4o-mini',
+                temperature,
+                messages,
+              }),
+            });
+            if (oa.ok) {
+              const data = await oa.json().catch(() => ({} as { choices?: Array<{ message?: ORChoiceMessage }> }));
+              const content = data?.choices?.[0]?.message?.content;
+              return content || 'Sorry, I had trouble generating a response.';
+            }
+          } catch {}
+        }
+        // Otherwise fallback to echo
+        return `You said: ${last.content}`;
+      }
+      const data = (await res.json()) as ORResponse;
+      const content = data?.choices?.[0]?.message?.content;
+      return content || 'Sorry, I had trouble generating a response.';
     }
-    const data = (await res.json()) as ORResponse;
-    const content = data?.choices?.[0]?.message?.content;
-    return content || 'Sorry, I had trouble generating a response.';
+
+    // Fallback to OpenAI if OpenRouter is not configured
+    if (openaiKey) {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: model || 'gpt-4o-mini',
+          temperature,
+          messages,
+        }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) return `You said: ${last.content}`;
+        const t = await res.text().catch(() => '');
+        throw new Error(`OpenAI error ${res.status}: ${t}`);
+      }
+      const data = await res.json().catch(() => ({} as { choices?: Array<{ message?: ORChoiceMessage }> }));
+      const content = data?.choices?.[0]?.message?.content;
+      return content || 'Sorry, I had trouble generating a response.';
+    }
+    // Safety net; TypeScript may not narrow above control flow across try-blocks
+    return `You said: ${last.content}`;
   } catch (e) {
     console.error('[generateAIResponseLocal] error:', e);
     return 'Sorry, I had trouble generating a response.';
@@ -277,28 +334,39 @@ const telegramWebhook = httpAction(async (ctx, req) => {
         content: text,
         metadata: { source: 'telegram' },
       });
+      // Fetch recent history for context
+      const history = await ctx.runQuery(api.sessions.getSessionMessages, { sessionId: session!._id as Id<'chatSessions'> });
+      const mapped = history.map(m => ({ role: m.role as 'user'|'assistant'|'system', content: m.content }));
 
-      await ctx.runQuery(api.sessions.getSessionMessages, { sessionId: session!._id as Id<'chatSessions'> });
+      // Build a knowledge section similar to other channels
+      const knowledge = await ctx.runQuery(api.fineTuning.getPublicAgentKnowledge, { agentId: agent._id as unknown as string, limit: 20 });
+      const knowledgeText = (knowledge || []).map((k: { input: unknown; output: unknown }) => {
+        const input = typeof k.input === 'string' ? k.input : '';
+        const output = typeof k.output === 'string' ? k.output : '';
+        return `- ${input}: ${output}`;
+      }).join('\n');
+      const knowledgeSection = knowledgeText ? `\n\nKnowledge Base (most recent first):\n${knowledgeText}` : '';
 
-      // Delegate to existing generator via chatWidget endpoint by calling runQuery/Mutation is ok here; 
-      // For simplicity, return a stub if OPENROUTER key missing is handled in generator.
-      // We'll reuse the same generateAIResponse flow by calling widgetChat logic indirectly is complex,
-      // so we can synthesize a minimal response or rely on configured OPENROUTER.
+      const messages = [
+        { role: 'system' as const, content: `${agent.systemPrompt}${knowledgeSection}` },
+        ...mapped,
+        { role: 'user' as const, content: text },
+      ];
 
-      // Simple echo fallback if no AI configured
-      const reply = `You said: ${text}`;
-      try {
-        // No direct shared function; rely on sessions and your external /api/chat if desired.
-      } catch {}
+      let ai = await generateAIResponseLocal({ messages, temperature: agent.temperature || 0.7, model: 'openai/gpt-4o-mini' });
+      // If fallback echo is returned, provide a more helpful default reply
+      if (/^You said:\s*/i.test(ai)) {
+        ai = 'Thanks for your message! How can I help you today?';
+      }
 
       await ctx.runMutation(api.sessions.createMessage, {
         sessionId: session!._id as Id<'chatSessions'>,
         role: 'assistant',
-        content: reply,
+        content: ai,
         metadata: { source: 'telegram' },
       });
 
-      await sendTelegramMessage(config.botToken, chatId, reply);
+      await sendTelegramMessage(config.botToken, chatId, ai);
       return corsResponse({ ok: true });
     }
 
@@ -307,6 +375,37 @@ const telegramWebhook = httpAction(async (ctx, req) => {
     return corsResponse({ error: 'Internal error' }, 500);
   }
 });
+
+// Server-side validation of Telegram bot token to avoid client networking issues
+// Body: { token: string }
+const telegramValidate = httpAction(async (_ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  try {
+    const body = await req.json().catch(() => ({} as { token?: string }));
+    const token = (body.token || '').toString().trim();
+    if (!token) return corsResponse({ ok: false, error: 'Missing token' }, 400);
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      // Pass through Telegram's error description if any
+      let description = '';
+      try {
+        const j = JSON.parse(text) as { description?: string };
+        description = j?.description || '';
+      } catch {}
+      return corsResponse({ ok: false, error: description || `Telegram getMe failed (${res.status})` }, 200);
+    }
+    let data: unknown = {};
+    try { data = JSON.parse(text); } catch {}
+    // Standardize payload
+    return corsResponse({ ok: true, botInfo: (data as { result?: unknown })?.result || null });
+  } catch (e) {
+    console.error('[telegramValidate] error:', e);
+    return corsResponse({ ok: false, error: 'Internal server error' }, 500);
+  }
+});
+
 
 // Meta (Messenger / WhatsApp) webhook support
 type MetaWebhookBody = {
@@ -566,10 +665,34 @@ http.route({ path: '/api/health', method: 'GET', handler: health });
 http.route({ path: '/api/health', method: 'OPTIONS', handler: options });
 http.route({ path: '/health', method: 'GET', handler: health });
 http.route({ path: '/health', method: 'OPTIONS', handler: options });
+// LLM/config health (booleans only; never return secrets)
+const llmHealth = httpAction(async () => {
+  const hasOpenRouter = typeof process.env.OPENROUTER_API_KEY === 'string' && process.env.OPENROUTER_API_KEY.length > 0;
+  const hasOpenAI = typeof process.env.OPENAI_API_KEY === 'string' && process.env.OPENAI_API_KEY.length > 0;
+  const hasDiscordBackendKey = typeof process.env.DISCORD_BACKEND_KEY === 'string' && process.env.DISCORD_BACKEND_KEY.length > 0;
+  const hasDiscordPublicKey = typeof process.env.DISCORD_PUBLIC_KEY === 'string' && process.env.DISCORD_PUBLIC_KEY.length > 0;
+  return corsResponse({ ok: true, hasOpenRouter, hasOpenAI, hasDiscordBackendKey, hasDiscordPublicKey });
+});
+http.route({ path: '/api/llm/health', method: 'GET', handler: llmHealth });
+http.route({ path: '/api/llm/health', method: 'OPTIONS', handler: options });
+// Public chat widget endpoints
+http.route({ path: '/api/chat/widget/session', method: 'POST', handler: createWidgetSession });
+http.route({ path: '/api/chat/widget/session', method: 'OPTIONS', handler: options });
+http.route({ path: '/chat/widget/session', method: 'POST', handler: createWidgetSession });
+http.route({ path: '/chat/widget/session', method: 'OPTIONS', handler: options });
+
+http.route({ path: '/api/chat/widget/chat', method: 'POST', handler: widgetChat });
+http.route({ path: '/api/chat/widget/chat', method: 'OPTIONS', handler: options });
+http.route({ path: '/chat/widget/chat', method: 'POST', handler: widgetChat });
+http.route({ path: '/chat/widget/chat', method: 'OPTIONS', handler: options });
 http.route({ path: '/api/telegram/webhook', method: 'POST', handler: telegramWebhook });
 http.route({ path: '/api/telegram/webhook', method: 'OPTIONS', handler: options });
 http.route({ path: '/telegram/webhook', method: 'POST', handler: telegramWebhook });
 http.route({ path: '/telegram/webhook', method: 'OPTIONS', handler: options });
+
+// Telegram validation endpoint
+http.route({ path: '/api/telegram/validate', method: 'POST', handler: telegramValidate });
+http.route({ path: '/api/telegram/validate', method: 'OPTIONS', handler: options });
 
 // Meta webhook routes (both /api and non-/api for convenience)
 http.route({ path: '/api/meta/webhook', method: 'GET', handler: metaWebhook });
@@ -666,6 +789,25 @@ const testWhatsAppSend = httpAction(async (ctx, req) => {
 http.route({ path: '/api/meta/whatsapp/test-send', method: 'POST', handler: testWhatsAppSend });
 http.route({ path: '/api/meta/whatsapp/test-send', method: 'OPTIONS', handler: options });
 
+// Discord supervisor compatibility endpoint to list active configs via HTTP GET.
+// Accepts backend key from query (?key=) or header 'X-Discord-Backend-Key'.
+const discordActiveConfigs = httpAction(async (_ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  try {
+    const url = new URL(req.url);
+    const key = (url.searchParams.get('key')
+      || req.headers.get('x-discord-backend-key')
+      || req.headers.get('X-Discord-Backend-Key')
+      || '').toString();
+    if (!key) return corsResponse({ error: 'Missing key' }, 400);
+    const list = await _ctx.runQuery(api.discord.listActiveConfigs, { key });
+    return corsResponse(list);
+  } catch (e) {
+    console.error('[discordActiveConfigs] error:', e);
+    return corsResponse({ error: 'Internal server error' }, 500);
+  }
+});
+
 // Activate Telegram webhook pointing to Convex HTTP Actions origin
 const activateTelegramWebhook = httpAction(async (ctx, req) => {
   if (req.method === 'OPTIONS') return corsResponse({});
@@ -716,5 +858,11 @@ http.route({ path: '/api/discord/respond', method: 'OPTIONS', handler: options }
 http.route({ path: '/api/discord/interactions', method: 'POST', handler: discordInteractions });
 http.route({ path: '/api/discord/interactions', method: 'OPTIONS', handler: options });
 
+
+// Discord supervisor compatibility routes (both with and without /api prefix)
+http.route({ path: '/discord/bot/activeConfigs', method: 'GET', handler: discordActiveConfigs });
+http.route({ path: '/discord/bot/activeConfigs', method: 'OPTIONS', handler: options });
+http.route({ path: '/api/discord/bot/activeConfigs', method: 'GET', handler: discordActiveConfigs });
+http.route({ path: '/api/discord/bot/activeConfigs', method: 'OPTIONS', handler: options });
 
 export default http;
