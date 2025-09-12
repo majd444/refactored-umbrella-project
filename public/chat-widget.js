@@ -226,6 +226,25 @@
     }
   }
 
+  // Expose a safe programmatic send for the iframe host via window.postMessage
+  try {
+    // Allow the host page to call window.__cw_send("text") inside the iframe
+    Object.defineProperty(window, "__cw_send", {
+      configurable: true,
+      value: function (text) {
+        try {
+          if (typeof text !== "string") return;
+          const t = text.trim();
+          if (!t) return;
+          inputEl.value = t;
+          send();
+        } catch (e) {
+          console.error("[chat-widget] __cw_send failed", e);
+        }
+      }
+    });
+  } catch {}
+
   // Toggle open/close
   launch.addEventListener("click", async () => {
     const isOpen = panel.style.display === "flex";

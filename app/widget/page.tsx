@@ -29,6 +29,19 @@ export default function WidgetPage() {
               } else {
                 openNow();
               }
+
+              // Accept messages from parent to send into chat
+              try {
+                window.addEventListener('message', function(ev){
+                  if (!ev || !ev.data) return;
+                  var d = ev.data;
+                  if (d && d.type === 'widget:send' && typeof d.text === 'string') {
+                    if (typeof window.__cw_send === 'function') {
+                      window.__cw_send(d.text);
+                    }
+                  }
+                });
+              } catch {}
             })();
           `,
         }}

@@ -8,6 +8,8 @@
   if (!currentScript) return;
 
   var botId = currentScript.getAttribute('data-bot-id') || currentScript.getAttribute('data-agent-id');
+  var autoOpenAttr = currentScript.getAttribute('data-open');
+  var autoOpen = (autoOpenAttr === null || autoOpenAttr === undefined) ? true : (autoOpenAttr !== 'false');
   var apiBase = currentScript.getAttribute('data-api-base') || '';
   if (!botId) {
     console.error('[Widget] Missing required data-bot-id attribute on script tag');
@@ -112,9 +114,11 @@
       document.body.appendChild(toggleBtn);
     }
   }
+  function maybeOpen(){ if (autoOpen) try { open(); } catch(e) {} }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', insertToggle);
+    document.addEventListener('DOMContentLoaded', function(){ insertToggle(); maybeOpen(); });
   } else {
     insertToggle();
+    maybeOpen();
   }
 })();
