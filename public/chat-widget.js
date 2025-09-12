@@ -1,306 +1,115 @@
-(() => {
-  const WIDGET_ID = "chat-widget";
-  const SESSION_KEY = "cw_session_v1";
-  const DEFAULTS = {
-    name: "AI Assistant",
-    welcomeMessage: "👋 Hi there! How can I help you today?",
-    headerColor: null, 
-    accentColor: null, 
-    backgroundColor: null, 
-    profileImage: null,
-  };
+(function(){
+  // Find current script tag
+  var currentScript = document.currentScript || (function(){
+    var scripts = document.getElementsByTagName('script');
+    return scripts[scripts.length - 1];
+  })();
 
-  // Resolve API base from the script src or data attribute
-  function getApiBase() {
-    const el = document.getElementById(WIDGET_ID);
-    const override = el?.dataset?.apiBase?.trim();
-    if (override) return override.replace(/\/+$/, "");
+  if (!currentScript) return;
 
-    // Find this script tag
-    const scripts = document.getElementsByTagName("script");
-    const self = [...scripts].find(s => {
-      const src = s.src || "";
-      return src.includes("chat-widget.js") || src.includes("widget.js");
-    });
-    if (!self) return "";
-
-    // Allow explicit override on the script tag as well
-    const scriptOverride = (self.dataset?.apiBase || "").trim();
-    if (scriptOverride) return scriptOverride.replace(/\/+$/, "");
-
-    try {
-      const url = new URL(self.src);
-      return `${url.protocol}//${url.host}`;
-    } catch { 
-      return ""; 
-    }
+  var botId = currentScript.getAttribute('data-bot-id') || currentScript.getAttribute('data-agent-id');
+  if (!botId) {
+    console.error('[Widget] Missing required data-bot-id attribute on script tag');
+    return;
   }
 
-  const API_BASE = getApiBase();
-  let elRoot = document.getElementById(WIDGET_ID);
-  if (!elRoot) {
-    // Legacy/inline usage: auto-create the root if a script tag provides bot id
-    const scripts = document.getElementsByTagName("script");
-    const self = [...scripts].find(s => {
-      const src = s.src || "";
-      return src.includes("chat-widget.js") || src.includes("widget.js");
-    });
-    const agentFromScript = self?.dataset?.botId || self?.dataset?.agentId || "";
-    if (agentFromScript) {
-      elRoot = document.createElement("div");
-      elRoot.id = WIDGET_ID;
-      elRoot.dataset.agentId = agentFromScript;
-      // Propagate apiBase if provided on script tag
-      if (self?.dataset?.apiBase) {
-        elRoot.dataset.apiBase = self.dataset.apiBase;
-      }
-      document.body.appendChild(elRoot);
-    }
-  }
-  if (!elRoot) return console.error("[chat-widget] Root div#chat-widget not found.");
-
-  const agentId = elRoot.dataset.agentId;
-  if (!agentId) return console.error("[chat-widget] data-agent-id is required.");
-  if (!API_BASE) {
-    console.warn('[chat-widget] Missing API base. Provide data-api-base on script or #chat-widget, or configure env.');
+  // Derive base origin from the script src so iframe points back to same host (e.g., your Vercel app)
+  function getBaseOrigin(src){
+    try { return new URL(src).origin; } catch { return window.location.origin; }
   }
 
-  // Build UI
-  elRoot.innerHTML = `
-    <div class="cw-panel" id="cw-panel">
-      <div class="cw-header">
-        <img id="cw-avatar" alt="avatar" />
-        <div>
-          <div class="cw-title" id="cw-title">${DEFAULTS.name}</div>
-          <div class="cw-sub" id="cw-sub">${DEFAULTS.welcomeMessage}</div>
-        </div>
-      </div>
-      <div class="cw-messages" id="cw-messages"></div>
-      <div class="cw-status" id="cw-status"></div>
-      <div class="cw-input">
-        <textarea id="cw-input" placeholder="Type your message…"></textarea>
-        <button class="cw-send" id="cw-send">Send ▸</button>
-      </div>
-    </div>
-    <button class="cw-launcher" id="cw-launch">Chat</button>
-  `;
+  var baseOrigin = getBaseOrigin(currentScript.src);
 
-  const panel = document.getElementById("cw-panel");
-  const launch = document.getElementById("cw-launch");
-  const messagesEl = document.getElementById("cw-messages");
-  const statusEl = document.getElementById("cw-status");
-  const inputEl = document.getElementById("cw-input");
-  const sendEl = document.getElementById("cw-send");
-  const titleEl = document.getElementById("cw-title");
-  const subEl = document.getElementById("cw-sub");
-  const avatarEl = document.getElementById("cw-avatar");
+  // Create container
+  var container = document.createElement('div');
+  container.id = 'chatbot-widget-container';
+  container.style.position = 'fixed';
+  container.style.bottom = '20px';
+  container.style.right = '20px';
+  container.style.width = '360px';
+  container.style.maxWidth = '90vw';
+  container.style.height = '520px';
+  container.style.maxHeight = '80vh';
+  container.style.zIndex = '2147483647';
+  container.style.boxShadow = '0 10px 30px rgba(0,0,0,0.12)';
+  container.style.borderRadius = '16px';
+  container.style.overflow = 'hidden';
+  container.style.background = 'transparent';
 
-  let sessionId = null;
-  let history = [];
+  // Toggle button
+  var toggleBtn = document.createElement('button');
+  toggleBtn.id = 'ycw-toggle';
+  toggleBtn.setAttribute('aria-label', 'Open chat');
+  toggleBtn.style.position = 'fixed';
+  toggleBtn.style.bottom = '20px';
+  toggleBtn.style.right = '20px';
+  toggleBtn.style.width = '56px';
+  toggleBtn.style.height = '56px';
+  toggleBtn.style.borderRadius = '50%';
+  toggleBtn.style.border = 'none';
+  toggleBtn.style.cursor = 'pointer';
+  toggleBtn.style.boxShadow = '0 8px 24px rgba(0,0,0,0.16)';
+  toggleBtn.style.background = '#3B82F6';
+  toggleBtn.style.color = '#fff';
+  toggleBtn.style.zIndex = '2147483646';
+  toggleBtn.style.display = 'flex';
+  toggleBtn.style.alignItems = 'center';
+  toggleBtn.style.justifyContent = 'center';
+  toggleBtn.style.fontSize = '22px';
+  toggleBtn.textContent = '💬';
 
-  function setStatus(t) { 
-    statusEl.textContent = t || ""; 
+  // Iframe
+  var iframe = document.createElement('iframe');
+  iframe.id = 'ycw-iframe';
+  iframe.title = 'Chatbot';
+  iframe.allow = 'clipboard-write;';
+  iframe.referrerPolicy = 'no-referrer-when-downgrade';
+  iframe.style.width = '100%';
+  iframe.style.height = '100%';
+  iframe.style.border = '0';
+  iframe.src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
+
+  var isOpen = false;
+  function open(){
+    if (isOpen) return;
+    document.body.appendChild(container);
+    container.appendChild(iframe);
+    isOpen = true;
+    toggleBtn.style.transform = 'translateY(-540px)';
+    toggleBtn.setAttribute('aria-label', 'Close chat');
+  }
+  function close(){
+    if (!isOpen) return;
+    if (container.parentNode) container.parentNode.removeChild(container);
+    while (container.firstChild) container.removeChild(container.firstChild);
+    isOpen = false;
+    toggleBtn.style.transform = 'translateY(0)';
+    toggleBtn.setAttribute('aria-label', 'Open chat');
   }
 
-  function bubble(role, text) {
-    const b = document.createElement("div");
-    b.className = "cw-bubble " + (role === "user" ? "cw-u" : "cw-a");
-    b.textContent = text;
-    messagesEl.appendChild(b);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-
-  function applyTheme(agent) {
-    if (!agent) return;
-    if (agent.name) titleEl.textContent = agent.name;
-    if (agent.welcomeMessage) subEl.textContent = agent.welcomeMessage;
-    if (agent.profileImage) { 
-      avatarEl.src = agent.profileImage; 
-      avatarEl.style.display = "block"; 
-    } else { 
-      avatarEl.style.display = "none"; 
-    }
-
-    if (agent.headerColor) document.documentElement.style.setProperty("--chat-header-bg", agent.headerColor);
-    if (agent.accentColor) document.documentElement.style.setProperty("--chat-accent", agent.accentColor);
-    if (agent.backgroundColor) document.documentElement.style.setProperty("--chat-bg", agent.backgroundColor);
-  }
-
-  function restoreSession() {
-    try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      if (data.agentId !== agentId) return null;
-      return data;
-    } catch { 
-      return null; 
-    }
-  }
-
-  function saveSession() {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ 
-      sessionId, 
-      agentId, 
-      history 
-    }));
-  }
-
-  async function ensureSession() {
-    const cached = restoreSession();
-    if (cached && cached.sessionId) {
-      sessionId = cached.sessionId;
-      history = Array.isArray(cached.history) ? cached.history : [];
-      return;
-    }
-
-    setStatus("Creating session…");
-    // Prefer same-origin proxy if available; otherwise use API_BASE
-    const url = (typeof location !== 'undefined' ? `${location.origin}/api/chat/widget/session` : '') || `${API_BASE}/api/chat/widget/session`;
-    
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId })
-      });
-
-      if (!res.ok) {
-        const t = await res.text().catch(() => res.statusText);
-        throw new Error(`Session error ${res.status}: ${t}`);
-      }
-
-      const data = await res.json();
-      sessionId = data.sessionId || data.id || data.session || null;
-      applyTheme(data.agent || data);
-      saveSession();
-      setStatus("");
-    } catch (error) {
-      console.error("Session creation failed:", error);
-      setStatus("Failed to create session. Please try again.");
-      throw error;
-    }
-  }
-
-  let isSending = false;
-
-  async function send() {
-    if (isSending) return;
-    const text = (inputEl.value || "").trim();
-    if (!text) return;
-    // Ensure a session exists even if the panel wasn't opened via launcher
-    if (!sessionId) {
-      try { await ensureSession(); } catch { /* status already set */ }
-    }
-    // Note: We can send via same-origin proxy even if API_BASE is empty
-
-    isSending = true;
-    sendEl.disabled = true;
-    inputEl.value = "";
-    bubble("user", text);
-    history.push({ role: "user", content: text });
-    saveSession();
-
-    const typing = document.createElement("div");
-    typing.className = "cw-bubble cw-a";
-    typing.textContent = "…";
-    messagesEl.appendChild(typing);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    setStatus('Sending…');
-
-    try {
-      const url = (typeof location !== 'undefined' ? `${location.origin}/api/chat/widget/chat` : '') || `${API_BASE}/api/chat/widget/chat`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          sessionId, 
-          agentId, 
-          message: text, 
-          history 
-        })
-      });
-
-      if (!res.ok) {
-        const t = await res.text().catch(() => res.statusText);
-        throw new Error(`HTTP ${res.status}: ${t}`);
-      }
-
-      const data = await res.json();
-      typing.remove();
-      const reply = data.reply || data.message || data.text || "(no reply)";
-      bubble("assistant", reply);
-      history.push({ role: "assistant", content: reply });
-      saveSession();
-      setStatus("");
-    } catch (err) {
-      typing.remove();
-      const msg = err?.message || 'Request failed';
-      bubble("assistant", "⚠️ " + msg);
-      setStatus(msg);
-      console.error("[chat-widget]", err);
-    } finally {
-      isSending = false;
-      sendEl.disabled = false;
-    }
-  }
-
-  // Expose a safe programmatic send for the iframe host via window.postMessage
-  try {
-    // Allow the host page to call window.__cw_send("text") inside the iframe
-    Object.defineProperty(window, "__cw_send", {
-      configurable: true,
-      value: function (text) {
-        try {
-          if (typeof text !== "string") return;
-          const t = text.trim();
-          if (!t) return;
-          inputEl.value = t;
-          send();
-        } catch (e) {
-          console.error("[chat-widget] __cw_send failed", e);
-        }
-      }
-    });
-  } catch {}
-
-  // Toggle open/close
-  launch.addEventListener("click", async () => {
-    const isOpen = panel.style.display === "flex";
-    panel.style.display = isOpen ? "none" : "flex";
-    
-    if (!isOpen) {
-      try {
-        await ensureSession();
-        // Show welcome only once
-        if (!messagesEl.dataset.welcomed) {
-          bubble("assistant", subEl.textContent || DEFAULTS.welcomeMessage);
-          messagesEl.dataset.welcomed = "1";
-        }
-      } catch (e) {
-        setStatus("Failed to initialize session.");
-        console.error(e);
-      }
+  toggleBtn.addEventListener('click', function(){
+    if (isOpen) {
+      close();
+    } else {
+      open();
     }
   });
 
-  // Handle send button and Enter key
-  sendEl.addEventListener("click", send);
-  inputEl.addEventListener("keydown", (e) => { 
-    if (e.key === "Enter" && !e.shiftKey) { 
-      e.preventDefault(); 
-      send(); 
-    } 
+  // Listen for close events from iframe
+  window.addEventListener('message', function(ev){
+    if (!ev || !ev.data) return;
+    if (ev.data === 'widget:close') close();
   });
 
-  // Fallback: event delegation in case listeners fail to bind
-  try {
-    elRoot.addEventListener('click', (ev) => {
-      const t = ev.target;
-      if (t && (t.id === 'cw-send' || (t.closest && t.closest('#cw-send')))) {
-        ev.preventDefault();
-        send();
-      }
-    });
-  } catch {}
+  // Insert toggle button (support late injection after DOMContentLoaded)
+  function insertToggle(){
+    if (!document.body.contains(toggleBtn)) {
+      document.body.appendChild(toggleBtn);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', insertToggle);
+  } else {
+    insertToggle();
+  }
 })();

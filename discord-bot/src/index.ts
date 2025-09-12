@@ -49,7 +49,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
+    // Removed MessageContent to avoid privileged intent requirement
     GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Channel],
@@ -94,21 +94,78 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // Optional: react to messages (for quick sanity checks)
 client.on(Events.MessageCreate, async (msg) => {
-  if (msg.author.bot) return
-  // Simple DM and guild handlers
-  if (msg.content === '!ping') {
-    await msg.reply('Pong! 🏓')
-    return
-  }
-  // Respond to any DM with a basic greeting to confirm the bot is online
-  if (!msg.guild) {
-    await msg.reply(
-      'Hi! I am online and received your DM. Try \'/ping\' or send "hello".'
-    )
-    return
-  }
-  if (msg.content.toLowerCase().includes('hello')) {
-    await msg.reply('Hello! 👋')
+  try {
+    if (msg.author.bot) return
+    const content = msg.content?.trim() || ''
+
+    // Health/simple checks
+    if (content === '!ping') {
+      await msg.reply('Pong! 🏓')
+      return
+    }
+
+    // Decide whether to invoke LLM:
+    // - Always in DMs
+    // - Or if message mentions the bot
+    // - Or if message starts with a simple prefix like !ask
+    const mentionsBot = msg.mentions.users.has(client.user?.id || '')
+    const startsWithAsk = content.toLowerCase().startsWith('!ask')
+    const isDM = !msg.guild
+
+    if (!(isDM || mentionsBot || startsWithAsk)) {
+      // Optional friendly greeting fallback
+      if (content.toLowerCase().includes('hello')) {
+        await msg.reply('Hello! 👋')
+      }
+      return
+    }
+
+    // Prepare prompt (strip trigger words)
+    const userMessage = startsWithAsk ? content.replace(/^!ask\s*/i, '') : content
+
+    // Call Convex Discord respond HTTP endpoint (HTTP Actions live on convex.site)
+    // Prefer CONVEX_HTTP_URL if provided. If only CONVEX_URL (.convex.cloud) is set,
+    // convert to .convex.site automatically to hit HTTP Actions.
+    const rawBase = (process.env.CONVEX_HTTP_URL || process.env.CONVEX_URL || process.env.NEXT_PUBLIC_CONVEX_URL || '').replace(/\/$/, '')
+    const base = rawBase.includes('.convex.cloud')
+      ? rawBase.replace('.convex.cloud', '.convex.site')
+      : rawBase
+    if (!base) {
+      await msg.reply('Server is missing configuration (CONVEX_URL). Please notify the admin.')
+      return
+    }
+
+    // Make the request
+    if (String(process.env.DISCORD_DISABLE_HTTP_RELAY || '').toLowerCase() === '1' ||
+        String(process.env.DISCORD_DISABLE_HTTP_RELAY || '').toLowerCase() === 'true') {
+      const reply = `You said: ${userMessage || 'Hello!'}`
+      await msg.reply(reply)
+      return
+    }
+
+    const res = await undiciFetch(`${base}/api/discord/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Source': 'discord' },
+      body: JSON.stringify({
+        agentId,
+        userId: `discord_${msg.author.id}`,
+        text: userMessage,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`LLM endpoint failed: ${res.status} ${res.statusText} ${text}`)
+    }
+    const data: any = await res.json().catch(() => ({}))
+    const reply = data?.reply || data?.message || '...'
+    await msg.reply(String(reply))
+  } catch (err) {
+    log.error({ err }, 'Failed to generate LLM reply')
+    try {
+      const content = msg.content?.trim() || ''
+      const fallback = content ? `You said: ${content}` : 'You said: Hello!'
+      await msg.reply(fallback)
+    } catch {}
   }
 })
 

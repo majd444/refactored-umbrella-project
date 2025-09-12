@@ -13,6 +13,15 @@ if (!token || !clientId) {
 const commands = [
   new SlashCommandBuilder().setName('ping').setDescription('Replies with Pong!'),
   new SlashCommandBuilder()
+    .setName('ask')
+    .setDescription('Ask the agent a question')
+    .addStringOption(opt =>
+      opt
+        .setName('q')
+        .setDescription('Your question')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
     .setName('agent')
     .setDescription('Agent utilities')
     .addSubcommand((sub) =>

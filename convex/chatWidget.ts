@@ -662,9 +662,6 @@ const metaWebhook = httpAction(async (ctx, req) => {
 http.route({ path: "/api/meta/webhook", method: "GET", handler: metaWebhook });
 http.route({ path: "/api/meta/webhook", method: "POST", handler: metaWebhook });
 http.route({ path: "/api/meta/webhook", method: "OPTIONS", handler: options });
-http.route({ path: "/meta/webhook", method: "GET", handler: metaWebhook });
-http.route({ path: "/meta/webhook", method: "POST", handler: metaWebhook });
-http.route({ path: "/meta/webhook", method: "OPTIONS", handler: options });
 
 // Activate Telegram webhook to Convex HTTP Actions base
 const activateTelegramWebhook = httpAction(async (ctx, req) => {
@@ -690,6 +687,16 @@ const activateTelegramWebhook = httpAction(async (ctx, req) => {
     });
     const data: { ok?: boolean; description?: string } = await res.json().catch(() => ({} as { ok?: boolean; description?: string }));
     if (!res.ok || data?.ok !== true) {
+      // Surface a clearer error for invalid tokens from Telegram
+      const desc = (data?.description || '').toLowerCase();
+      if (res.status === 401 || desc.includes('unauthorized')) {
+        console.error('[activateTelegramWebhook] Unauthorized: invalid Telegram bot token');
+        return corsResponse({
+          error: 'Unauthorized',
+          message: 'Telegram rejected the request: your bot token appears to be invalid. Please regenerate the token with @BotFather (/token) and update it in the Telegram settings for this agent.',
+          details: data,
+        }, 401);
+      }
       console.error('[activateTelegramWebhook] setWebhook failed:', data);
       return corsResponse({ error: 'Failed to set webhook', details: data }, 500);
     }

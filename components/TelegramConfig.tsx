@@ -24,6 +24,14 @@ interface TelegramConfigProps {
   agentId: Id<"agents">
 }
 
+interface TelegramBotInfo {
+  id?: number
+  is_bot?: boolean
+  first_name?: string
+  last_name?: string
+  username?: string
+}
+
 export default function TelegramConfig({ agentId }: TelegramConfigProps) {
   const { toast } = useToast()
   
@@ -34,7 +42,7 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
   const [isValidating, setIsValidating] = useState(false)
   const [validationResult, setValidationResult] = useState<{
     isValid: boolean
-    botInfo?: { username: string; first_name: string }
+    botInfo?: TelegramBotInfo
     error?: string
   } | null>(null)
 
@@ -52,24 +60,54 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
   }, [telegramConfig])
 
   // Validate bot token with Telegram API
-  const validateBotToken = async (token: string) => {
-    if (!token.trim()) return
+  const validateBotToken = async (rawToken: string) => {
+    const token = rawToken.trim()
+    if (!token) return
 
     setIsValidating(true)
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/getMe`)
-      const data = await response.json()
+      // Prefer HTTP Actions base (.site) when provided; fallback to Convex client URL
+      const httpBase = (process.env.NEXT_PUBLIC_CONVEX_HTTP_URL || process.env.NEXT_PUBLIC_CONVEX_URL || '').replace(/\/$/, '')
+      let ok = false
+      let botInfo: TelegramBotInfo | undefined = undefined
+      let errorMsg: string | undefined
+      if (httpBase) {
+        const resp = await fetch(`${httpBase}/api/telegram/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        })
+        if (resp.ok) {
+          const data = await resp.json().catch(() => ({} as { ok?: boolean; botInfo?: TelegramBotInfo; error?: string }))
+          ok = !!data?.ok
+          botInfo = data?.botInfo
+          errorMsg = data?.error
+        } else {
+          // Fallback to direct Telegram validate if server route not found yet
+          const response = await fetch(`https://api.telegram.org/bot${token}/getMe`)
+          const data = await response.json()
+          ok = !!data?.ok
+          botInfo = data?.result
+          errorMsg = data?.description
+        }
+      } else {
+        const response = await fetch(`https://api.telegram.org/bot${token}/getMe`)
+        const data = await response.json()
+        ok = !!data?.ok
+        botInfo = data?.result
+        errorMsg = data?.description
+      }
 
-      if (data.ok && data.result) {
+      if (ok && botInfo) {
         setValidationResult({
           isValid: true,
-          botInfo: data.result
+          botInfo
         })
-        setBotUsername(data.result.username)
+        if (botInfo?.username) setBotUsername(botInfo.username)
       } else {
         setValidationResult({
           isValid: false,
-          error: data.description || "Invalid bot token"
+          error: errorMsg || "Invalid bot token"
         })
       }
     } catch (error) {
@@ -89,8 +127,8 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
     setValidationResult(null)
     
     // Auto-validate if token looks complete
-    if (value.match(/^\d+:[A-Za-z0-9_-]{35}$/)) {
-      validateBotToken(value)
+    if (value.trim().match(/^\d+:[A-Za-z0-9_-]{30,100}$/)) {
+      validateBotToken(value.trim())
     }
   }
 
@@ -105,14 +143,7 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
       return
     }
 
-    if (!validationResult?.isValid) {
-      toast({
-        title: "Error", 
-        description: "Please enter a valid bot token",
-        className: "bg-red-500 text-white"
-      })
-      return
-    }
+    // Proceed even if validation hasn't succeeded client-side; we'll rely on server-side webhook set to determine validity
 
     try {
       setIsLoading(true)
@@ -128,9 +159,9 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
 
       // Explicitly call Convex HTTP activate endpoint to force webhook to Convex URL
       try {
-        const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || ''
-        if (convexUrl) {
-          const resp = await fetch(`${convexUrl.replace(/\/$/, '')}/api/telegram/activate`, {
+        const httpBase = (process.env.NEXT_PUBLIC_CONVEX_HTTP_URL || process.env.NEXT_PUBLIC_CONVEX_URL || '').replace(/\/$/, '')
+        if (httpBase) {
+          const resp = await fetch(`${httpBase}/api/telegram/activate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ agentId })
@@ -262,7 +293,7 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
                 <>
                   <CheckCircle className="h-4 w-4 text-green-500" />
                   <span className="text-green-600">
-                    Valid bot: @{validationResult.botInfo?.username}
+                    {`Valid bot${validationResult.botInfo?.username ? `: @${validationResult.botInfo.username}` : ''}`}
                   </span>
                 </>
               ) : (
@@ -311,7 +342,7 @@ export default function TelegramConfig({ agentId }: TelegramConfigProps) {
         <div className="flex gap-2 pt-4">
           <Button
             onClick={handleSave}
-            disabled={isLoading || !validationResult?.isValid}
+            disabled={isLoading || !botToken.trim()}
             className="flex items-center gap-2"
           >
             {isLoading ? (
