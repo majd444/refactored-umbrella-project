@@ -1,12 +1,11 @@
-type SearchParams = { [key: string]: string | string[] | undefined };
+"use client";
+import { useSearchParams } from "next/navigation";
 
-export default function WidgetPage({ searchParams }: { searchParams?: SearchParams }) {
-  const sp = searchParams || {};
-  const botIdParam = sp.botId;
-  const botId = Array.isArray(botIdParam) ? botIdParam[0] : botIdParam || "";
-  const apiBaseParam = sp.apiBase;
-  const qpApiBase = Array.isArray(apiBaseParam) ? apiBaseParam[0] : apiBaseParam || "";
-  const apiBase = qpApiBase || process.env.NEXT_PUBLIC_CONVEX_URL || "";
+export default function WidgetPage() {
+  const sp = useSearchParams();
+  const botId = (sp.get("botId") || "").toString();
+  const qpApiBase = (sp.get("apiBase") || "").toString();
+  const apiBase = qpApiBase || (process.env.NEXT_PUBLIC_CONVEX_URL || "");
 
   return (
     <>
