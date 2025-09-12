@@ -8,6 +8,7 @@
   if (!currentScript) return;
 
   var botId = currentScript.getAttribute('data-bot-id') || currentScript.getAttribute('data-agent-id');
+  var apiBase = currentScript.getAttribute('data-api-base') || '';
   if (!botId) {
     console.error('[Widget] Missing required data-bot-id attribute on script tag');
     return;
@@ -67,7 +68,11 @@
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = '0';
-  iframe.src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
+  var src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
+  if (apiBase) {
+    src += '&apiBase=' + encodeURIComponent(apiBase);
+  }
+  iframe.src = src;
 
   var isOpen = false;
   function open(){
