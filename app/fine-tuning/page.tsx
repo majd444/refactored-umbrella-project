@@ -134,7 +134,7 @@ export default function FineTuningPage() {
               try {
                 const metadata = JSON.parse(e.target.value);
                 setFormData({ ...formData, metadata });
-              } catch (error) {
+              } catch (_error) {
                 // Invalid JSON, don't update
               }
             }}

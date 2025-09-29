@@ -16,6 +16,8 @@ interface SimpleChatFormProps {
   _accentColor: string;
   _profileImage: string;
   className?: string;
+  // When true (default), the submit button is hidden if there are no active fields.
+  hideSubmitIfNoFields?: boolean;
 }
 
 export const SimpleChatForm: React.FC<SimpleChatFormProps> = ({
@@ -26,7 +28,8 @@ export const SimpleChatForm: React.FC<SimpleChatFormProps> = ({
   _headerColor,
   _accentColor,
   _profileImage,
-  className = ''
+  className = '',
+  hideSubmitIfNoFields = true
 }) => {
   const [formData, setFormData] = React.useState<Record<string, string>>({});
 
@@ -48,9 +51,22 @@ export const SimpleChatForm: React.FC<SimpleChatFormProps> = ({
       {/* Chat Header */}
       <div className="p-4 flex items-center justify-between border-b" style={{ backgroundColor: _headerColor }}>
         <div className="flex items-center">
-          <div className="w-10 h-10 rounded-full bg-gray-300 mr-3 flex items-center justify-center text-white">
-            {_assistantName.charAt(0).toUpperCase()}
-          </div>
+          {_profileImage ? (
+            <Image
+              src={_profileImage}
+              alt={_assistantName}
+              width={40}
+              height={40}
+              className="rounded-full mr-3"
+            />
+          ) : (
+            <div
+              className="w-10 h-10 rounded-full mr-3 flex items-center justify-center text-white"
+              style={{ backgroundColor: _accentColor }}
+            >
+              {_assistantName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <h2 className="text-lg font-semibold text-white">{_assistantName}</h2>
         </div>
         <button className="text-white hover:bg-white/20 p-2 rounded-full">
@@ -119,13 +135,15 @@ export const SimpleChatForm: React.FC<SimpleChatFormProps> = ({
             )}
           </div>
         ))}
-        <button
-          type="submit"
-          className="w-full py-2 px-4 rounded-md text-white"
-          style={{ backgroundColor: _accentColor }}
-        >
-          Submit
-        </button>
+        {(!hideSubmitIfNoFields || formFields.length > 0) && (
+          <button
+            type="submit"
+            className="w-full py-2 px-4 rounded-md text-white"
+            style={{ backgroundColor: _accentColor }}
+          >
+            Submit
+          </button>
+        )}
       </form>
     </div>
   );

@@ -1,12 +1,7 @@
 import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
-import { ThemeProvider } from "next-themes"
-import { Providers } from "./providers"
-import { Toaster } from "@/components/ui/toaster"
-import { ConvexClientProvider } from "@/components/providers/convex-provider"
-
-export const dynamic = 'force-dynamic';
+import ClientRoot from "./client-root"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,20 +26,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="light" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Providers>
-          <ConvexClientProvider>
-            <ThemeProvider
-              attribute="class"
-              defaultTheme="light"
-              enableSystem={false}
-              disableTransitionOnChange
-            >
-              {children}
-              <Toaster />
-            </ThemeProvider>
-          </ConvexClientProvider>
-        </Providers>
+        <ClientRoot>{children}</ClientRoot>
       </body>
     </html>
   );
 }
+

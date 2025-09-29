@@ -70,7 +70,8 @@ export default function MetaConfig({ agentId }: MetaConfigProps) {
       if (!webhookUrl) return
       await navigator.clipboard.writeText(webhookUrl)
       toast({ title: "Copied", description: "Webhook URL copied to clipboard", className: "bg-green-500 text-white" })
-    } catch (e) {
+    } catch (_e) {
+      console.debug('Copy webhook failed:', _e)
       toast({ title: "Copy failed", description: "Could not copy to clipboard", className: "bg-red-500 text-white" })
     }
   }
@@ -108,9 +109,9 @@ export default function MetaConfig({ agentId }: MetaConfigProps) {
         throw new Error(t || `HTTP ${res.status}`)
       }
       toast({ title: "Sent", description: "Test message sent via WhatsApp Cloud API", className: "bg-green-500 text-white" })
-    } catch (e) {
-      console.error(e)
-      toast({ title: "Send failed", description: e instanceof Error ? e.message : "Unknown error", className: "bg-red-500 text-white" })
+    } catch (_e) {
+      console.error(_e)
+      toast({ title: "Send failed", description: _e instanceof Error ? _e.message : "Unknown error", className: "bg-red-500 text-white" })
     } finally {
       setIsSending(false)
     }

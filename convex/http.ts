@@ -14,8 +14,184 @@ function corsResponse(json: unknown, status = 200) {
       'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
     },
   });
-
 }
+
+// --- Widget Chat Endpoints (session + chat) ---
+type SessionResponse = { sessionId: Id<'chatSessions'>; agent?: { id: Id<'agents'>; name: string; welcomeMessage: string; systemPrompt: string; temperature: number; headerColor?: string; accentColor?: string; backgroundColor?: string; profileImage?: string; collectUserInfo?: boolean; formFields?: Array<{ id: string; type: string; label: string; required: boolean; value?: string }> } };
+type WidgetChatRequest = { sessionId: Id<'chatSessions'>; agentId: Id<'agents'>; message: string; history?: Array<{ role: 'user'|'assistant'|'system'; content: string }>; systemPromptOverride?: string; user?: Partial<{ name: string; email: string; phone: string; custom: string }>; userFields?: Record<string, string> };
+type ChatResponse = { reply: string; sessionId: Id<'chatSessions'> };
+
+const createWidgetSession = httpAction(async (ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  try {
+    const body = await req.json().catch(() => ({} as { agentId?: string }));
+    const agentIdStr = (body.agentId || '').toString().trim();
+    if (!agentIdStr) return corsResponse({ error: 'agentId is required' }, 400);
+    const agentId = agentIdStr as unknown as Id<'agents'>;
+
+    const agent = await ctx.runQuery(api.agents.getPublic, { id: agentId });
+    if (!agent) return corsResponse({ error: 'Agent not found' }, 404);
+
+    const sessionId = await ctx.runMutation(api.sessions.createSession, {
+      agentId,
+      userId: 'widget-user',
+      metadata: { source: 'widget' },
+    });
+
+    const res: SessionResponse = {
+      sessionId,
+      agent: {
+        id: agent._id as Id<'agents'>,
+        name: agent.name,
+        welcomeMessage: agent.welcomeMessage,
+        systemPrompt: agent.systemPrompt,
+        temperature: agent.temperature,
+        headerColor: (agent as { headerColor?: string }).headerColor,
+        accentColor: (agent as { accentColor?: string }).accentColor,
+        backgroundColor: (agent as { backgroundColor?: string }).backgroundColor,
+        profileImage: (agent as { profileImage?: string }).profileImage,
+        // Pre-chat
+        collectUserInfo: Boolean((agent as { collectUserInfo?: unknown }).collectUserInfo),
+        formFields: Array.isArray((agent as { formFields?: unknown }).formFields)
+          ? ((agent as { formFields?: Array<{ id?: unknown; type?: unknown; label?: unknown; required?: unknown; value?: unknown }> }).formFields!).map((f) => ({
+              id: String(f.id ?? ''),
+              type: String((f.type as string) || 'text'),
+              label: String((f.label as string) || ''),
+              required: Boolean(f.required),
+              value: typeof f.value === 'string' ? (f.value as string) : ''
+            }))
+          : [],
+      },
+    };
+    return corsResponse(res);
+  } catch (e) {
+    console.error('[createWidgetSession] error:', e);
+    return corsResponse({ error: 'Internal server error' }, 500);
+  }
+});
+
+
+// Server-side validation of Discord bot token to avoid saving invalid tokens
+// Body: { token: string }
+const discordValidate = httpAction(async (_ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  try {
+    const body = await req.json().catch(() => ({} as { token?: string }));
+    const token = (body.token || '').toString().trim();
+    if (!token) return corsResponse({ ok: false, error: 'Missing token' }, 400);
+
+    // Validate by calling Discord API: GET /users/@me with Bot token
+    const res = await fetch('https://discord.com/api/v10/users/@me', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bot ${token}`,
+      },
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      let description = '';
+      try {
+        const j = JSON.parse(text) as { message?: string };
+        description = j?.message || '';
+      } catch {}
+      return corsResponse({ ok: false, error: description || `Discord validate failed (${res.status})` }, 200);
+    }
+    let data: unknown = {};
+    try { data = JSON.parse(text); } catch {}
+    return corsResponse({ ok: true, botInfo: data });
+  } catch (e) {
+    console.error('[discordValidate] error:', e);
+    return corsResponse({ ok: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// Save pre-chat user info to the session metadata
+const saveUserInfo = httpAction(async (ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  try {
+    const body = (await req.json().catch(() => ({}))) as { sessionId?: Id<'chatSessions'>; userInfo?: Record<string, string> };
+    const sessionId = body.sessionId as Id<'chatSessions'> | undefined;
+    const userInfo = body.userInfo || {};
+    if (!sessionId || typeof userInfo !== 'object') return corsResponse({ error: 'sessionId and userInfo are required' }, 400);
+    await ctx.runMutation(api.sessions.updateSessionUserInfo, { sessionId, userInfo });
+    return corsResponse({ ok: true });
+  } catch (e) {
+    console.error('[saveUserInfo] error:', e);
+    return corsResponse({ error: 'Internal server error' }, 500);
+  }
+});
+
+const widgetChat = httpAction(async (ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  try {
+    const body = (await req.json().catch(() => ({}))) as WidgetChatRequest;
+    const { sessionId, agentId, message, history = [], systemPromptOverride, user, userFields } = body || ({} as WidgetChatRequest);
+    if (!sessionId || !agentId || !message) return corsResponse({ error: 'sessionId, agentId, and message are required' }, 400);
+
+    const session = await ctx.runQuery(api.sessions.getSession, { id: sessionId });
+    if (!session) return corsResponse({ error: 'Session not found' }, 404);
+    if (session.agentId !== agentId) return corsResponse({ error: 'Session does not belong to this agent' }, 403);
+
+    const agent = await ctx.runQuery(api.agents.getPublic, { id: agentId });
+    if (!agent) return corsResponse({ error: 'Agent not found' }, 404);
+
+    // Persist any provided user info to session metadata before saving the message
+    try {
+      const merged: Record<string, string> = {};
+      if (user && typeof user === 'object') {
+        Object.entries(user).forEach(([k, v]) => {
+          if (typeof v === 'string' && v.trim()) merged[k] = v.trim();
+        });
+      }
+      if (userFields && typeof userFields === 'object') {
+        Object.entries(userFields).forEach(([k, v]) => {
+          if (typeof v === 'string' && v.trim()) merged[k] = v.trim();
+        });
+      }
+      if (Object.keys(merged).length > 0) {
+        await ctx.runMutation(api.sessions.updateSessionUserInfo, { sessionId, userInfo: merged });
+      }
+    } catch (e) {
+      console.warn('[widgetChat] Failed to save user info on chat:', e);
+    }
+
+    await ctx.runMutation(api.sessions.createMessage, { sessionId, role: 'user', content: message, metadata: { source: 'widget' } });
+
+    const knowledge = await ctx.runQuery(api.fineTuning.getPublicAgentKnowledge, { agentId: agent._id as unknown as string, limit: 20 });
+    const knowledgeText = (knowledge || []).map((k: { input: unknown; output: unknown }) => {
+      const input = typeof k.input === 'string' ? k.input : '';
+      const output = typeof k.output === 'string' ? k.output : '';
+      return `- ${input}: ${output}`;
+    }).join('\n');
+    const knowledgeSection = knowledgeText ? `\n\nKnowledge Base (most recent first):\n${knowledgeText}` : '';
+
+    const systemContent = `${(systemPromptOverride && systemPromptOverride.trim().length > 0 ? systemPromptOverride : agent.systemPrompt)}${knowledgeSection}`;
+    const messages = [
+      { role: 'system' as const, content: systemContent },
+      ...history,
+      { role: 'user' as const, content: message },
+    ];
+
+    let ai = await generateAIResponseLocal({ messages, temperature: agent.temperature || 0.7, model: 'openai/gpt-4o-mini' });
+    if (/^You said:\s*/i.test(ai)) {
+      ai = 'Thanks! How can I help you further?';
+    }
+
+    await ctx.runMutation(api.sessions.createMessage, { sessionId, role: 'assistant', content: ai, metadata: { source: 'widget' } });
+    await ctx.runMutation(api.sessions.updateSessionLastActive, { id: sessionId });
+
+    const res: ChatResponse = { reply: ai, sessionId };
+    return corsResponse(res);
+  } catch (e) {
+    console.error('[widgetChat] error:', e);
+    return corsResponse({ error: 'Internal server error' }, 500);
+  }
+});
+
 
 
 // --- Discord Interactions (HTTPS) ---
@@ -174,6 +350,52 @@ const options = httpAction(async () => {
 
 const health = httpAction(async () => corsResponse({ status: 'ok' }));
 
+// Public: fetch agent public config by botId (agentId)
+const getAgentPublic = httpAction(async (ctx, req) => {
+  if (req.method === 'OPTIONS') return corsResponse({});
+  if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  try {
+    const url = new URL(req.url);
+    const botId = url.searchParams.get('botId');
+    if (!botId) return corsResponse({ error: 'Missing botId' }, 400);
+
+    const agent = await ctx.runQuery(api.agents.getPublic, { id: botId as unknown as Id<'agents'> });
+    if (!agent) return corsResponse({ error: 'Agent not found' }, 404);
+
+    // Basic ETag based on id and updatedAt to enable client-side caching and 304 responses
+    const updatedAt: number | undefined = (agent as { updatedAt?: number }).updatedAt;
+    const etag = `W/"agent-${(agent as { _id?: string })._id || botId}-${updatedAt ?? 'na'}"`;
+    const ifNoneMatch = req.headers.get('If-None-Match');
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          'ETag': etag,
+          'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
+        },
+      });
+    }
+
+    return new Response(JSON.stringify(agent), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+        'ETag': etag,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
+      },
+    });
+  } catch (e) {
+    console.error('[getAgentPublic] error:', e);
+    return corsResponse({ error: 'Internal server error' }, 500);
+  }
+});
+
 // Simple OpenRouter-based generator with graceful fallback if no key configured
 type ORChoiceMessage = { content?: string };
 type ORResponse = { choices?: Array<{ message?: ORChoiceMessage }> };
@@ -187,7 +409,10 @@ async function generateAIResponseLocal(params: {
   if (!last || last.role !== 'user') return '...';
   const apiKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey && !openaiKey) return `You said: ${last.content}`;
+  // Neutral fallback: echo the user text if no LLM is available/authorized
+  const neutralFallback = (userText: string): string => `You said: ${userText}`;
+
+  if (!apiKey && !openaiKey) return neutralFallback(last.content);
   try {
     if (apiKey) {
       const orModel = process.env.OPENROUTER_MODEL || model || 'openrouter/auto';
@@ -205,6 +430,10 @@ async function generateAIResponseLocal(params: {
         const status = res.status;
         const t = await res.text().catch(() => '');
         console.error('[OpenRouter] non-OK', status, t?.slice(0, 200));
+        // Heuristic fallback for common unauthorized or bad request issues
+        if (status === 401 || status === 400) {
+          return neutralFallback(last.content);
+        }
         // Attempt OpenAI fallback if available
         if (openaiKey) {
           try {
@@ -227,8 +456,8 @@ async function generateAIResponseLocal(params: {
             }
           } catch {}
         }
-        // Otherwise fallback to echo
-        return `You said: ${last.content}`;
+        // Otherwise fallback
+        return neutralFallback(last.content);
       }
       const data = (await res.json()) as ORResponse;
       const content = data?.choices?.[0]?.message?.content;
@@ -250,7 +479,7 @@ async function generateAIResponseLocal(params: {
         }),
       });
       if (!res.ok) {
-        if (res.status === 401) return `You said: ${last.content}`;
+        if (res.status === 401) return neutralFallback(last.content);
         const t = await res.text().catch(() => '');
         throw new Error(`OpenAI error ${res.status}: ${t}`);
       }
@@ -259,10 +488,10 @@ async function generateAIResponseLocal(params: {
       return content || 'Sorry, I had trouble generating a response.';
     }
     // Safety net; TypeScript may not narrow above control flow across try-blocks
-    return `You said: ${last.content}`;
+    return neutralFallback(last.content);
   } catch (e) {
     console.error('[generateAIResponseLocal] error:', e);
-    return 'Sorry, I had trouble generating a response.';
+    return neutralFallback(last.content);
   }
 }
 
@@ -649,7 +878,11 @@ const discordRelay = httpAction(async (ctx, req) => {
       { role: 'system' as const, content: `${agent.systemPrompt}${knowledgeSection}` },
       { role: 'user' as const, content: text },
     ];
-    const ai = await generateAIResponseLocal({ messages, temperature: agent.temperature || 0.7, model: 'openai/gpt-4o-mini' });
+    let ai = await generateAIResponseLocal({ messages, temperature: agent.temperature || 0.7, model: 'openai/gpt-4o-mini' });
+    // Normalize neutral fallback into a friendlier message
+    if (/^You said:\s*/i.test(ai)) {
+      ai = 'Thanks for your message! How can I help you today?';
+    }
 
     await ctx.runMutation(api.sessions.createMessage, { sessionId: session!._id as Id<'chatSessions'>, role: 'assistant', content: ai, metadata: { source: 'discord' } });
     return corsResponse({ ok: true, reply: ai });
@@ -664,6 +897,21 @@ http.route({ path: '/api/health', method: 'GET', handler: health });
 http.route({ path: '/api/health', method: 'OPTIONS', handler: options });
 http.route({ path: '/health', method: 'GET', handler: health });
 http.route({ path: '/health', method: 'OPTIONS', handler: options });
+// Public agent fetch for widget or external sites
+http.route({ path: '/api/getAgent', method: 'GET', handler: getAgentPublic });
+http.route({ path: '/api/getAgent', method: 'OPTIONS', handler: options });
+// Widget chat/session endpoints used by lib/api/client.ts
+http.route({ path: '/api/chat/widget/session', method: 'POST', handler: createWidgetSession });
+http.route({ path: '/api/chat/widget/session', method: 'OPTIONS', handler: options });
+http.route({ path: '/api/chat/widget/chat', method: 'POST', handler: widgetChat });
+http.route({ path: '/api/chat/widget/chat', method: 'OPTIONS', handler: options });
+// Pre-chat user info persistence
+http.route({ path: '/api/chat/widget/user', method: 'POST', handler: saveUserInfo });
+http.route({ path: '/api/chat/widget/user', method: 'OPTIONS', handler: options });
+
+// Discord token validation
+http.route({ path: '/api/discord/validate', method: 'POST', handler: discordValidate });
+http.route({ path: '/api/discord/validate', method: 'OPTIONS', handler: options });
 // LLM/config health (booleans only; never return secrets)
 const llmHealth = httpAction(async () => {
   const hasOpenRouter = typeof process.env.OPENROUTER_API_KEY === 'string' && process.env.OPENROUTER_API_KEY.length > 0;

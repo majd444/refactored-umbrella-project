@@ -4,7 +4,6 @@ import { Sidebar } from "@/components/sidebar"
 import { useAuth } from "@clerk/nextjs"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
-import { syncUser } from "@/actions/user-actions"
 
 export default function DashboardLayout({
   children,
@@ -19,8 +18,17 @@ export default function DashboardLayout({
       if (!userId) {
         router.push('/sign-in/[[...sign-in]]')
       } else {
-        // Sync user with Convex
-        syncUser()
+        // Sync user with Convex via API route
+        fetch('/api/sync-user', { method: 'POST' })
+          .then(async (res) => {
+            const data = await res.json().catch(() => null)
+            if (!res.ok) {
+              console.error('[sync-user] failed', res.status, data)
+            } else {
+              console.log('[sync-user] ok', data)
+            }
+          })
+          .catch((e) => console.error('[sync-user] network error', e))
       }
     }
   }, [isLoaded, userId, router])

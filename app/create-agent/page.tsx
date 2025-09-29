@@ -3,7 +3,7 @@
 import React, { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
-import { X, RefreshCw, Upload, FileText, Globe, Trash2, Copy, Plus, Edit2, ChevronDown, Phone, User, Mail, Puzzle } from "lucide-react"
+import { X, RefreshCw, Upload, FileText, Globe, Trash2, Copy, Plus, Edit2, ChevronDown, Phone, User, Mail, ExternalLink } from "lucide-react"
 import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Slider } from "@/components/ui/slider"
 import SimpleChatForm from "@/components/simple-chat-form"
 import ChatInterface from "@/components/chat-interface"
+import { apiClient } from "@/lib/api/client"
 import TelegramConfig from "@/components/TelegramConfig"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
@@ -41,12 +42,8 @@ interface ExtractedContent {
 
 // Constants
 const pluginLogos = [
-  { id: "wordpress", name: "WordPress", logoUrl: "https://s.w.org/style/images/about/WordPress-logotype-wmark.png" },
   { id: "shopify", name: "Shopify", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/0e/Shopify_logo_2018.svg" },
-  { id: "whatsapp", name: "WhatsApp", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" },
   { id: "html-css", name: "HTML", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg" },
-  { id: "instagram", name: "Instagram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg" },
-  { id: "messenger", name: "Meta", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/05/Facebook_Logo_%282019%29.png" },
   { id: "telegram", name: "Telegram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" },
   { id: "discord", name: "Discord", logoUrl: "https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png" },
 ]
@@ -80,7 +77,6 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
   const [isBackgroundColorPopoverOpen, setIsBackgroundColorPopoverOpen] = useState(false)
   const [selectedContentIndex, setSelectedContentIndex] = useState<number | null>(null)
   const [extractedContents, setExtractedContents] = useState<ExtractedContent[]>([])
-  const [extractedLinks, setExtractedLinks] = useState<Array<{url: string, text: string}>>([])
   const [extractionUrl, setExtractionUrl] = useState('')
   const [isExtracting, setIsExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +90,8 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
   const [startPos, setStartPos] = useState({ x: 0, y: 0 })
   const [scale, setScale] = useState(1)
   const [agentIdState, setAgentIdState] = useState<string | null>(null)
+  const [widgetSessionId, setWidgetSessionId] = useState<string | null>(null)
+  const lastPromptUsedRef = useRef<string>("")
   const [formFields, setFormFields] = useState<Array<{
     id: string;
     type: string;
@@ -184,7 +182,6 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
       }
 
       setExtractedContents(prev => [...prev, newContent])
-      setExtractedLinks(responseData.structured?.links || [])
       setExtractionUrl('')
     } catch (error) {
       setError(error instanceof Error ? error.message.replace(/^Error: /, '') : 'An unknown error occurred')
@@ -253,6 +250,40 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
               links: responseData.structured?.links || []
             }
           }])
+          // Persist to knowledge base if authenticated
+          if (user) {
+            try {
+              const agentId = await ensureAgentSaved()
+              await saveFineTuning({
+                agentId: String(agentId),
+                input: `file:${file.name}`,
+                output: extractedText,
+                metadata: {
+                  structured: responseData.structured,
+                  source: 'file-upload',
+                  lengthOriginal: extractedText.length,
+                },
+              })
+              toast({
+                className: 'bg-green-500 text-white',
+                title: 'Saved to Knowledge Base',
+                description: `Saved ${extractedText.length} chars from ${file.name}`,
+              })
+            } catch (e) {
+              console.error('[create-agent] Save to knowledge base failed (PDF):', e)
+              toast({
+                className: 'bg-yellow-500 text-white',
+                title: 'Preview only',
+                description: 'Could not save to Knowledge Base. Content still available below.',
+              })
+            }
+          } else {
+            toast({
+              className: 'bg-blue-500 text-white',
+              title: 'Preview Ready',
+              description: 'Sign in to save extracted content to your Knowledge Base.',
+            })
+          }
           processedFiles.push(file.name)
         } else if (file.type.startsWith('text/') || ['.txt', '.md', '.json'].includes(`.${fileExt}`)) {
           const text = await file.text()
@@ -263,6 +294,40 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
             text,
             structured: { tabs: [], inputs: [], buttons: [], links: [] },
           }])
+          // Persist to knowledge base if authenticated
+          if (user) {
+            try {
+              const agentId = await ensureAgentSaved()
+              await saveFineTuning({
+                agentId: String(agentId),
+                input: `file:${file.name}`,
+                output: text,
+                metadata: {
+                  structured: { tabs: [], inputs: [], buttons: [], links: [] },
+                  source: 'file-upload',
+                  lengthOriginal: text.length,
+                },
+              })
+              toast({
+                className: 'bg-green-500 text-white',
+                title: 'Saved to Knowledge Base',
+                description: `Saved ${text.length} chars from ${file.name}`,
+              })
+            } catch (e) {
+              console.error('[create-agent] Save to knowledge base failed (text):', e)
+              toast({
+                className: 'bg-yellow-500 text-white',
+                title: 'Preview only',
+                description: 'Could not save to Knowledge Base. Content still available below.',
+              })
+            }
+          } else {
+            toast({
+              className: 'bg-blue-500 text-white',
+              title: 'Preview Ready',
+              description: 'Sign in to save extracted content to your Knowledge Base.',
+            })
+          }
           processedFiles.push(file.name)
         }
       } catch (error) {
@@ -283,9 +348,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
     if (e.target) e.target.value = ''
   }
 
-  const removeLink = (index: number) => {
-    setExtractedLinks(prev => prev.filter((_, i) => i !== index))
-  }
+  // removed: extractedLinks feature and removeLink handler
 
   // Render Functions
   const renderHeader = () => (
@@ -356,6 +419,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
           headerColor,
           accentColor,
           backgroundColor,
+          profileImage: profileImage || undefined,
           collectUserInfo,
           formFields: formFieldsData
         });
@@ -370,6 +434,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
           headerColor,
           accentColor,
           backgroundColor,
+          profileImage: profileImage || undefined,
           collectUserInfo,
           formFields: formFieldsData
         });
@@ -467,6 +532,35 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
     return String(newId);
   }
 
+  // When chat opens, ensure we have an agent and a widget session
+  React.useEffect(() => {
+    const setupSession = async () => {
+      try {
+        if (!showChat) return;
+        let agentId = agentIdState;
+        if (!agentId) {
+          agentId = await ensureAgentSaved();
+        }
+        if (agentId && !widgetSessionId) {
+          const res = await apiClient.createWidgetSession(agentId);
+          if (res?.sessionId) setWidgetSessionId(res.sessionId);
+        }
+      } catch (e) {
+        console.error('[create-agent] Failed to create widget session:', e);
+      }
+    };
+    setupSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showChat]);
+
+  // When the System Prompt changes, clear the widget session so the next message
+  // starts a fresh conversation with the new prompt (no manual reload required)
+  React.useEffect(() => {
+    if (showChat) {
+      setWidgetSessionId(null);
+    }
+  }, [systemPrompt, showChat]);
+
   return (
     <div className="fixed inset-0 z-50 bg-white flex flex-col h-screen w-screen">
       {renderHeader()}
@@ -508,13 +602,11 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
               isExtracting={isExtracting}
               extractedContents={extractedContents}
               setExtractedContents={setExtractedContents}
-              extractedLinks={extractedLinks}
               selectedContentIndex={selectedContentIndex}
               setSelectedContentIndex={setSelectedContentIndex}
               error={error}
               handleExtract={handleExtract}
               handleFileUpload={handleFileUpload}
-              removeLink={removeLink}
             />
             <StyleTab
               profileImage={profileImage}
@@ -571,7 +663,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
           <div className="flex-1 min-h-0">
             <div className="h-full border rounded-lg overflow-hidden">
               <div className="h-full w-full flex items-center justify-center p-4">
-                {!showChat ? (
+                {(collectUserInfo && formFields.length > 0 && !showChat) ? (
                   <SimpleChatForm
                     formFields={formFields.map(field => ({
                       id: field.id,
@@ -581,7 +673,24 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
                       value: field.value || ''
                     }))}
                     onFormSubmitAction={async (formData: Record<string, string>) => {
-                      console.log('Form submitted with data:', formData);
+                      try {
+                        // Ensure agent exists
+                        let agentId = agentIdState;
+                        if (!agentId) agentId = await ensureAgentSaved();
+                        // Ensure widget session exists
+                        let sessionId = widgetSessionId;
+                        if (!sessionId && agentId) {
+                          const res = await apiClient.createWidgetSession(agentId);
+                          sessionId = res.sessionId;
+                          setWidgetSessionId(sessionId);
+                        }
+                        if (sessionId) {
+                          await apiClient.saveWidgetUserInfo(sessionId, formData);
+                        }
+                      } catch (e) {
+                        console.error('[create-agent] saveWidgetUserInfo failed:', e);
+                        // Continue to show chat even if saving fails
+                      }
                       setShowChat(true);
                       return; // Explicitly return void
                     }}
@@ -595,21 +704,49 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
                   />
                 ) : (
                   <ChatInterface
+                    key={`chat-${systemPrompt}`}
                     assistantName={assistantName}
                     profileImage={profileImage || undefined}
-                    welcomeMessage={welcomeMessage || `👋 Hi there! I&apos;m ${assistantName}. How can I help you today?`}
+                    welcomeMessage={welcomeMessage || `👋 Hi there! I'm ${assistantName}. How can I help you today?`}
                     headerColor={headerColor}
                     accentColor={accentColor}
                     onSendMessage={async (message: string) => {
-                      // In a real app, you would send this to your API
-                      console.log('Message sent:', message);
-                      // Simulate a response
-                      setTimeout(() => {
-                        setShowChat(prev => !prev); // Toggle chat to force re-render with new messages
-                      }, 1000);
-                      return; // Explicitly return void
+                      try {
+                        let agentId = agentIdState;
+                        if (!agentId) {
+                          agentId = await ensureAgentSaved();
+                        }
+                        // Prepare session id; if prompt changed, force null to create a new session
+                        let sessionId = widgetSessionId;
+                        if (lastPromptUsedRef.current !== systemPrompt) {
+                          sessionId = null;
+                          setWidgetSessionId(null);
+                          lastPromptUsedRef.current = systemPrompt;
+                        }
+                        if (!sessionId && agentId) {
+                          const res = await apiClient.createWidgetSession(agentId);
+                          sessionId = res.sessionId;
+                          setWidgetSessionId(sessionId);
+                        }
+                        if (!agentId || !sessionId) return 'Session not ready.';
+                        const resp = await apiClient.sendWidgetMessage(
+                          sessionId,
+                          agentId,
+                          message,
+                          [],
+                          systemPrompt // preview unsaved system prompt
+                        );
+                        return resp.reply || '...';
+                      } catch (e) {
+                        console.error('[create-agent] sendWidgetMessage failed:', e);
+                        return 'Sorry, I had trouble responding.';
+                      }
                     }}
-                    onClose={onClose}
+                    onReload={() => {
+                      // Clear current widget session; next send will create a new one
+                      setWidgetSessionId(null);
+                      // Keep chat open and show fresh welcome (already handled inside component)
+                    }}
                     className="w-full h-full"
                   />
                 )}
@@ -912,20 +1049,18 @@ interface FineTuningTabProps {
   setExtractionUrl: (value: string) => void
   isExtracting: boolean
   extractedContents: ExtractedContent[]
-  setExtractedContents: (contents: ExtractedContent[]) => void
-  extractedLinks: Array<{url: string, text: string}>
+  setExtractedContents: (value: ExtractedContent[]) => void
   selectedContentIndex: number | null
-  setSelectedContentIndex: (index: number | null) => void
+  setSelectedContentIndex: (value: number | null) => void
   error: string | null
   handleExtract: () => Promise<void>
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>
-  removeLink: (index: number) => void
 }
 
 const FineTuningTab: React.FC<FineTuningTabProps> = ({
   extractionUrl, setExtractionUrl, isExtracting, extractedContents, setExtractedContents,
-  extractedLinks, selectedContentIndex, setSelectedContentIndex, error, handleExtract,
-  handleFileUpload, removeLink
+  selectedContentIndex, setSelectedContentIndex, error, handleExtract,
+  handleFileUpload
 }) => (
   <TabsContent value="fine-tuning" className="space-y-6">
     <div className="p-4 bg-gray-50 rounded-lg mb-4">
@@ -962,27 +1097,6 @@ const FineTuningTab: React.FC<FineTuningTabProps> = ({
           </div>
           {error && <div className="text-red-500 text-sm">{error}</div>}
           <div>
-            <h4 className="text-sm font-medium mb-2 text-black">Extracted Links ({extractedLinks.length})</h4>
-            {extractedLinks.length > 0 ? (
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {extractedLinks.map((link, index) => (
-                  <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded-md">
-                    <div className="flex items-center text-sm truncate">
-                      <Globe className="h-4 w-4 mr-2 text-black flex-shrink-0" />
-                      <span className="truncate text-black">{link.text || link.url}</span>
-                    </div>
-                    <button
-                      className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5 ml-2 flex-shrink-0"
-                      onClick={() => removeLink(index)}
-                    >
-                      <Trash2 className="h-4 w-4 text-black" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-4 text-black text-sm">No links extracted yet</div>
-            )}
             {extractedContents.filter(c => c.url.startsWith('http')).length > 0 && (
               <div className="mt-4">
                 <h4 className="text-sm font-medium text-black mb-2">URL Extracted Content ({extractedContents.filter(c => c.url.startsWith('http')).length})</h4>
@@ -995,7 +1109,7 @@ const FineTuningTab: React.FC<FineTuningTabProps> = ({
                     else if (selectedContentIndex !== null && selectedContentIndex > index) setSelectedContentIndex(selectedContentIndex - 1);
                   }}
                   selectedIndex={selectedContentIndex}
-                  onSelect={setSelectedContentIndex}
+                  onSelect={(i) => setSelectedContentIndex(selectedContentIndex === i ? null : i)}
                   isUrl={true}
                 />
               </div>
@@ -1057,11 +1171,9 @@ const FineTuningTab: React.FC<FineTuningTabProps> = ({
                 const actualIndex = extractedContents.findIndex((c) => !c.url.startsWith('http') && extractedContents.filter(d => !d.url.startsWith('http')).indexOf(c) === index)
                 const newContents = extractedContents.filter((_, i) => i !== actualIndex);
                 setExtractedContents(newContents);
-                if (selectedContentIndex === actualIndex) setSelectedContentIndex(null)
-                else if (selectedContentIndex !== null && selectedContentIndex > actualIndex) setSelectedContentIndex(selectedContentIndex - 1)
               }}
               selectedIndex={selectedContentIndex}
-              onSelect={setSelectedContentIndex}
+              onSelect={(i) => setSelectedContentIndex(selectedContentIndex === i ? null : i)}
               isUrl={false}
             />
           </div>
@@ -1106,6 +1218,18 @@ const ExtractedContentList: React.FC<ExtractedContentListProps> = ({
             <span className="ml-2 text-xs text-gray-500 whitespace-nowrap">({doc.text.length.toLocaleString()} chars)</span>
           </div>
           <div className="flex items-center">
+            {isUrl && (
+              <a
+                href={doc.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="p-1 text-gray-500 hover:text-blue-500"
+                title="Open in new tab"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(doc.text); }}
               className="p-1 text-gray-500 hover:text-blue-500"
@@ -1283,6 +1407,7 @@ const StyleTab: React.FC<StyleTabProps> = ({
         <AvatarPreview
           profileImage={profileImage}
           headerColor={headerColor}
+          initials={initials}
           position={position}
           scale={scale}
           isDragging={isDragging}
@@ -1387,6 +1512,7 @@ const StyleTab: React.FC<StyleTabProps> = ({
 interface AvatarPreviewProps {
   profileImage: string | null
   headerColor: string
+  initials: string
   position: { x: number; y: number }
   scale: number
   isDragging: boolean
@@ -1398,7 +1524,7 @@ interface AvatarPreviewProps {
 }
 
 const AvatarPreview: React.FC<AvatarPreviewProps> = ({
-  profileImage, headerColor, position, scale, isDragging,
+  profileImage, headerColor, initials, position, scale, isDragging,
   onMouseDown, onMouseMove, onMouseUp, onWheel, onUploadClick
 }) => {
   // Debug log to check the profileImage prop
@@ -1452,7 +1578,7 @@ const AvatarPreview: React.FC<AvatarPreviewProps> = ({
             </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <span className="text-white font-bold text-6xl">AA</span>
+              <span className="text-white font-bold text-6xl">{initials || 'AA'}</span>
             </div>
           )}
           <div
@@ -1581,7 +1707,7 @@ interface PluginsTabProps {
 const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
   const router = useRouter();
   const [showEmbed, setShowEmbed] = React.useState(false)
-  const [snippet, setSnippet] = React.useState('<script src="https://fghjyy.vercel.app/chat-widget.js" data-bot-id="USER_BOT_ID"></script>')
+  const [snippet, setSnippet] = React.useState('<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
   const [isEmbedLoading, setIsEmbedLoading] = React.useState(false)
   const [embedError, setEmbedError] = React.useState<string | null>(null)
   const [embedTitle, setEmbedTitle] = React.useState('Embed Script')
@@ -1650,8 +1776,8 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://fghjyy.vercel.app'
-        setSnippet(`<script src="${origin}/widget.js" data-bot-id="${id}"></script>`)
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        setSnippet(`<script src="${origin}/shopify-chat-widget.js?v=1" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
         setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
@@ -1667,8 +1793,8 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://fghjyy.vercel.app'
-        setSnippet(`<script src="${origin}/chat-widget.js" data-bot-id="${id}"></script>`)
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        setSnippet(`<script src="${origin}/widget.js" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
         setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
@@ -1737,16 +1863,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
           </Card>
         ))}
       </div>
-      <div className="mt-4">
-        <h3 className="text-base font-medium mb-2 text-black">Plugin Configuration</h3>
-        <div className="bg-gray-50 p-3 rounded-lg">
-          <p className="text-xs text-black mb-2">Enable plugins above to configure their settings. Each plugin may require API keys or authentication tokens.</p>
-          <Button variant="ghost" size="sm" className="text-black hover:bg-gray-100">
-            <Puzzle className="mr-2 h-4 w-4" />
-            View Plugin Documentation
-          </Button>
-        </div>
-      </div>
+      
 
       <Dialog open={showEmbed} onOpenChange={(open) => { setShowEmbed(open); if (!open) { setEmbedError(null); setEmbedTitle('Embed Script'); } }}>
         <DialogContent className="max-w-3xl w-[90vw] max-h-[80vh] overflow-y-auto">

@@ -75,7 +75,7 @@ async function sendTelegramMessage(botToken: string, chatId: number, text: strin
 }
 
 // Generate AI response using the agent
-async function generateResponse(agentId: string, userMessage: string, userId: string, origin: string) {
+async function generateResponse(agentId: string, userMessage: string, userId: string, _origin: string) {
   try {
     const convex = getConvexClient()
     // Get agent details

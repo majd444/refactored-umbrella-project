@@ -83,6 +83,7 @@ export const update = mutation({
     headerColor: v.string(),
     accentColor: v.string(),
     backgroundColor: v.string(),
+    profileImage: v.optional(v.union(v.string(), v.null())),
     collectUserInfo: v.boolean(),
     formFields: v.array(v.object({
       id: v.string(),
@@ -136,6 +137,8 @@ export const update = mutation({
         headerColor: /^#[0-9A-F]{6}$/i.test(args.headerColor) ? args.headerColor : "#3B82F6",
         accentColor: /^#[0-9A-F]{6}$/i.test(args.accentColor) ? args.accentColor : "#00D4FF",
         backgroundColor: /^#[0-9A-F]{6}$/i.test(args.backgroundColor) ? args.backgroundColor : "#FFFFFF",
+        // Normalize null to undefined for optional field
+        profileImage: args.profileImage || undefined,
         collectUserInfo: Boolean(args.collectUserInfo),
         formFields: args.formFields.map((field, index) => ({
           id: field.id || `field-${index}-${Date.now()}`,
@@ -213,6 +216,39 @@ export const create = mutation({
 
     const userId = identity.subject
     console.log(`[createAgent] Creating agent for user: ${userId}`)
+
+    // Fetch user's subscription plan; default to 'free'
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+    const plan = (user?.plan as "free" | "basic" | "pro" | undefined) ?? "free";
+
+    // Determine max agents by plan
+    const planLimits: Record<"free" | "basic" | "pro", number> = {
+      free: 1,
+      basic: 3,
+      pro: 5,
+    };
+    const maxAgents = planLimits[plan];
+
+    // Count existing agents for the user
+    const currentCount = await ctx.db
+      .query("agents")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect()
+      .then((rows) => rows.length);
+
+    if (currentCount >= maxAgents) {
+      console.warn(`[createAgent] Plan limit reached for user ${userId}: plan=${plan}, limit=${maxAgents}, count=${currentCount}`)
+      throw new ConvexError(
+        plan === "free"
+          ? "Free plan limit reached: You can only create 1 chatbot. Upgrade to Basic or Pro to create more."
+          : plan === "basic"
+          ? "Basic plan limit reached: You can create up to 3 chatbots. Upgrade to Pro to create more."
+          : "Pro plan limit reached: You can create up to 5 chatbots."
+      )
+    }
 
     // Input validation
     if (!args.name?.trim()) {
@@ -305,6 +341,17 @@ export const getPublic = query({
       accentColor: agent.accentColor,
       backgroundColor: agent.backgroundColor,
       profileImage: agent.profileImage,
+      // Pre-chat configuration
+      collectUserInfo: Boolean((agent as { collectUserInfo?: unknown }).collectUserInfo),
+      formFields: Array.isArray((agent as { formFields?: unknown }).formFields)
+        ? ((agent as { formFields?: Array<{ id?: unknown; type?: unknown; label?: unknown; required?: unknown; value?: unknown }> }).formFields!).map((f) => ({
+            id: String(f.id ?? ''),
+            type: String((f.type as string) || 'text'),
+            label: String((f.label as string) || ''),
+            required: Boolean(f.required),
+            value: typeof f.value === 'string' ? (f.value as string) : ''
+          }))
+        : [],
     };
   }
 });

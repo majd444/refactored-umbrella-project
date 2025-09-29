@@ -1,0 +1,42 @@
+{
+    "name": "content-extraction-service",
+    "version": "1.0.0",
+    "description": "Extraction service for generating fine-tuning datasets from URLs and files (PDF, DOCX, TXT)",
+    "main": "extraction-service.js",
+    "scripts": {
+      "start": "./start-extraction-service.sh",
+      "server": "node extraction-service.js",
+      "dev": "nodemon extraction-service.js",
+      "test": "node test-extraction-service.js",
+      "install": "chmod +x install-extraction-service.sh start-extraction-service.sh && ./install-extraction-service.sh"
+    },
+    "keywords": [
+      "content",
+      "extraction",
+      "pdf",
+      "docx",
+      "url",
+      "text",
+      "fine-tuning",
+      "dataset",
+      "ai",
+      "machine-learning"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+      "axios": "^1.8.4",
+      "cheerio": "^1.0.0",
+      "cors": "^2.8.5",
+      "express": "^5.1.0",
+      "form-data": "^4.0.0",
+      "mammoth": "^1.9.0",
+      "multer": "^1.4.5-lts.1"
+    },
+    "devDependencies": {
+      "nodemon": "^3.1.0"
+    },
+    "engines": {
+      "node": ">=14.0.0"
+    }
+  } 

@@ -138,7 +138,9 @@ client.on(Events.MessageCreate, async (msg) => {
     // Make the request
     if (String(process.env.DISCORD_DISABLE_HTTP_RELAY || '').toLowerCase() === '1' ||
         String(process.env.DISCORD_DISABLE_HTTP_RELAY || '').toLowerCase() === 'true') {
-      const reply = `You said: ${userMessage || 'Hello!'}`
+      const reply = userMessage && userMessage.length > 0
+        ? 'Thanks for your message! How can I help you today?'
+        : 'Thanks for your message! How can I help you today?'
       await msg.reply(reply)
       return
     }
@@ -162,8 +164,7 @@ client.on(Events.MessageCreate, async (msg) => {
   } catch (err) {
     log.error({ err }, 'Failed to generate LLM reply')
     try {
-      const content = msg.content?.trim() || ''
-      const fallback = content ? `You said: ${content}` : 'You said: Hello!'
+      const fallback = 'Sorry, I had trouble generating a response. How can I help you today?'
       await msg.reply(fallback)
     } catch {}
   }

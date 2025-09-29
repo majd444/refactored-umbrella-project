@@ -1,0 +1,43 @@
+# Copy this content to your .env.local file
+# Remove duplicates and add missing Clerk variables
+
+# Next.js Configuration
+NODE_ENV=development
+__NEXT_DYNAMIC_IO=true
+
+# App Configuration
+NEXT_PUBLIC_APP_NAME=YourAppName
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+# Note: Remove the duplicate NEXT_PUBLIC_APP_URL line in your current file
+
+# Convex Configuration
+CONVEX_DEPLOYMENT=effervescent-mandrill-295
+CONVEX_URL=https://effervescent-mandrill-295.convex.cloud
+NEXT_PUBLIC_CONVEX_URL=https://effervescent-mandrill-295.convex.cloud
+CONVEX_HTTP_URL=https://effervescent-mandrill-295.convex.site
+NEXT_PUBLIC_CONVEX_HTTP_URL=https://effervescent-mandrill-295.convex.site
+
+# Clerk Authentication (REQUIRED - ADD THESE)
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_aWRlYWwtZG9nLTYyLmNsZXJrLmFjY291bnRzLmRldiQ
+CLERK_SECRET_KEY=sk_test_OmoutNWSX84fwOnFtFqmvSHuf47R3Bkc9Sdhh045kS
+CLERK_JWT_ISSUER=https://ideal-dog-62.clerk.accounts.dev
+NEXT_PUBLIC_CLERK_JWT_ISSUER=https://ideal-dog-62.clerk.accounts.dev
+CLERK_WEBHOOK_SECRET=whsec_Rt6oSLDj4yBHChK3DUtrFErWPcmNfvZY
+
+# Clerk Routing Configuration
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/onboarding
+
+# OpenRouter API
+OPENROUTER_API_KEY=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
+
+# Discord Configuration
+DISCORD_BACKEND_KEY=R8Pp0+zcCnhiNcog44QzY02UlPiF1BnErJKl7T8/1ZY=
+DISCORD_PUBLIC_KEY=X7kP9mZ3
+interactions_endpoint_url=https://effervescent-mandrill-295.convex.cloud/api/discord/interactions
+
+# Meta/WhatsApp Configuration
+META_VERIFY_TOKEN=my_secret_token_9b1e
+whatsapp_VERIFY_TOKEN=verify_godzila_7q3k0w1n

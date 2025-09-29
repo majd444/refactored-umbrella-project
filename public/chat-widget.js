@@ -20,6 +20,15 @@
 
   var baseOrigin = getBaseOrigin(currentScript.src);
 
+  // Hint the browser to establish early connection to the host serving the widget
+  try {
+    var pre = document.createElement('link');
+    pre.rel = 'preconnect';
+    pre.href = baseOrigin;
+    pre.crossOrigin = '';
+    document.head && document.head.appendChild(pre);
+  } catch {}
+
   // Create container
   var container = document.createElement('div');
   container.id = 'chatbot-widget-container';
@@ -64,6 +73,8 @@
   iframe.title = 'Chatbot';
   iframe.allow = 'clipboard-write;';
   iframe.referrerPolicy = 'no-referrer-when-downgrade';
+  // Let capable browsers lazy-load the iframe when it becomes visible
+  try { iframe.loading = 'lazy'; } catch {}
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = '0';

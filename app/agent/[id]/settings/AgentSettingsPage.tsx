@@ -20,12 +20,16 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { 
   Puzzle,
   Trash2,
-  ArrowLeft
+  ArrowLeft,
+  ChevronDown,
+  ExternalLink
 } from "lucide-react"
 import SimpleChatForm from "@/components/simple-chat-form"
+import ChatInterface from "@/components/chat-interface"
 import TelegramConfig from "@/components/TelegramConfig"
 import MetaConfig from "@/components/MetaConfig"
 import DiscordConfig from "@/components/DiscordConfig"
+import { apiClient } from "@/lib/api/client"
 
 // Types
 type FormField = {
@@ -73,10 +77,13 @@ export default function AgentSettingsPage() {
   
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastPromptUsedRef = useRef<string>("");
   
   // State
   const [isLoading, setIsLoading] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [showPluginModal, setShowPluginModal] = useState(false);
+  const [widgetSessionId, setWidgetSessionId] = useState<string | null>(null);
   const [currentPlugin, setCurrentPlugin] = useState<{id: string, name: string} | null>(null);
   const [activeTab, setActiveTab] = useState("configuration");
   // Discord configuration UI moved to components/DiscordConfig
@@ -134,16 +141,46 @@ export default function AgentSettingsPage() {
   const knowledgeEntries = useMemo(() => (
     shouldRunPrivate && knowledgeEntriesPrivate ? knowledgeEntriesPrivate : []
   ), [shouldRunPrivate, knowledgeEntriesPrivate]);
+  // Knowledge usage for cap enforcement: derive from already-fetched private entries
+  const usage = useMemo(() => {
+    if (!shouldRunPrivate || !knowledgeEntriesPrivate) return { totalChars: 0, totalEntries: 0 } as const;
+    type FTEntry = { output?: string };
+    const rows = knowledgeEntriesPrivate as unknown as FTEntry[];
+    const totalChars = rows.reduce((sum, r) => sum + (typeof r.output === 'string' ? r.output.length : 0), 0);
+    const totalEntries = rows.length;
+    return { totalChars, totalEntries } as const;
+  }, [shouldRunPrivate, knowledgeEntriesPrivate]);
+  const MAX_KB_CHARS = 500_000;
   const [viewEntry, setViewEntry] = useState<KnowledgeEntry | null>(null);
   const [expandedLinks, setExpandedLinks] = useState<Set<number>>(new Set());
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
   const urlEntries = useMemo(() => (knowledgeEntries || []).filter(e => (e.input || '').startsWith('url:')), [knowledgeEntries]);
+  const docEntries = useMemo(() => (knowledgeEntries || []).filter(e => !(e.input || '').startsWith('url:')), [knowledgeEntries]);
 
-  // Origin for embeds (defaults to localhost in SSR)
-  const embedOrigin = useMemo(() => {
-    if (process.env.NEXT_PUBLIC_WIDGET_ORIGIN) return process.env.NEXT_PUBLIC_WIDGET_ORIGIN as string;
-    return 'https://fghjyy.vercel.app';
-  }, []);
+  // Removed unused embed origin variable
+
+  // Ensure a widget session when chat opens
+  useEffect(() => {
+    const ensureSession = async () => {
+      try {
+        if (showChat && !widgetSessionId && params?.id) {
+          const res = await apiClient.createWidgetSession(String(params.id));
+          if (res?.sessionId) setWidgetSessionId(res.sessionId);
+        }
+      } catch (e) {
+        console.error('[AgentSettings] Failed to create widget session:', e);
+      }
+    };
+    ensureSession();
+  }, [showChat, widgetSessionId, params?.id]);
+
+  // When the System Prompt changes in settings, clear current session so the next
+  // message starts fresh with the updated prompt (no manual reload needed)
+  useEffect(() => {
+    if (showChat) {
+      setWidgetSessionId(null);
+    }
+  }, [formState.systemPrompt, showChat]);
 
   // Update form state when agent data loads
   useEffect(() => {
@@ -392,6 +429,8 @@ export default function AgentSettingsPage() {
 
       // Persist contents for allowed files
       const files = Array.from(e.target.files);
+      // Remaining budget across this batch based on current usage
+      let remaining = Math.max(0, MAX_KB_CHARS - (usage?.totalChars || 0));
       const saves = files.map(async (file) => {
         // Skip disallowed types (already validated in processFiles)
         const isAllowed = [
@@ -405,10 +444,32 @@ export default function AgentSettingsPage() {
         let content = "";
         let metadata: Record<string, unknown> = { filename: file.name, mimeType: file.type, size: file.size };
 
+        // If no remaining capacity, skip with a warning per file
+        if (remaining <= 0) {
+          toast({
+            title: "Knowledge base full",
+            description: `Cannot add ${file.name}. You've reached the 500,000 character limit. Delete some entries or summarize existing content first.`,
+            className: "bg-yellow-500 text-white",
+          });
+          return;
+        }
+
         if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
-          // PDF text extraction is experimental; store placeholder with metadata
-          content = "[PDF uploaded: text extraction pending]";
-          metadata = { ...metadata, note: "PDF extraction not implemented on client" };
+          // Use the server-side extraction endpoint for PDFs
+          const formData = new FormData();
+          formData.append("file", file);
+          const resp = await fetch("/api/extract-file", { method: "POST", body: formData });
+          const data: { success?: boolean; text?: string; pages?: number; error?: string } = await resp.json().catch(
+            () => ({}) as { success?: boolean; text?: string; pages?: number; error?: string }
+          );
+          if (!resp.ok || data?.success === false || !data?.text) {
+            // If extraction fails, store a clear placeholder note
+            content = "[PDF uploaded: text extraction failed or produced no text]";
+            metadata = { ...metadata, note: data?.error || "PDF extraction failed" };
+          } else {
+            content = (data.text || "").trim();
+            metadata = { ...metadata, pages: data.pages };
+          }
         } else {
           // Read text for txt/md/json
           const text = await file.text();
@@ -424,12 +485,42 @@ export default function AgentSettingsPage() {
           }
         }
 
+        // Enforce remaining capacity. If content too large, auto-summarize via OpenRouter endpoint.
+        if (typeof content === 'string') {
+          if (content.length > remaining) {
+            try {
+              const resp = await fetch('/api/summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: content, targetChars: Math.max(200, remaining) }),
+              });
+              const j: { success?: boolean; summary?: string } = await resp.json().catch(
+                () => ({}) as { success?: boolean; summary?: string }
+              );
+              if (resp.ok && j?.success && typeof j?.summary === 'string' && j.summary.length > 0) {
+                content = j.summary;
+                metadata = { ...metadata, summarized: true, originalLength: content.length };
+              } else {
+                // Fallback to truncation
+                content = content.slice(0, remaining);
+                metadata = { ...metadata, summarized: false, truncated: true };
+              }
+            } catch {
+              content = content.slice(0, remaining);
+              metadata = { ...metadata, summarized: false, truncated: true };
+            }
+          }
+        }
+
         await saveFineTuning({
           agentId: String(params.id),
           input: `file:${file.name}`,
           output: content,
           metadata,
         });
+
+        // Decrease remaining budget after save
+        remaining = Math.max(0, remaining - (typeof content === 'string' ? content.length : 0));
       });
 
       await Promise.all(saves);
@@ -459,7 +550,7 @@ export default function AgentSettingsPage() {
       // Reset file input so same file can be reselected if needed
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  }, [processFiles, saveFineTuning, params.id, toast]);
+  }, [processFiles, saveFineTuning, params.id, toast, usage?.totalChars]);
 
   // Handle URL extraction via Next.js edge route: extract and persist into knowledge base
   const handleExtract = useCallback(async () => {
@@ -531,6 +622,58 @@ export default function AgentSettingsPage() {
       setIsExtracting(false);
     }
   }, [extractionUrl, params.id, saveFineTuning, toast, isUserLoaded, user]);
+
+  // Avatar upload specifically for the Agent avatar in the Style tab
+  const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    const file = e.target.files[0];
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = reader.result as string;
+        try {
+          // Build a full update payload (update mutation requires all fields)
+          const validatedFormFields = (Array.isArray(formState.formFields) ? formState.formFields : [])
+            .filter(field => field && typeof field === 'object' && field.id)
+            .map(field => ({
+              id: String(field.id || `field-${Date.now()}`),
+              type: String(field.type || 'text'),
+              label: String(field.label || 'Untitled Field'),
+              required: Boolean(field.required),
+              value: field.value ? String(field.value) : ''
+            }));
+
+          await updateAgent({
+            id: params.id as Id<"agents">,
+            name: String(formState.name || 'AI Assistant').trim(),
+            welcomeMessage: String(formState.welcomeMessage || '').trim(),
+            systemPrompt: String(formState.systemPrompt || 'You are a helpful AI assistant.').trim(),
+            temperature: typeof formState.temperature === 'number' ? Math.max(0, Math.min(1, formState.temperature)) : 0.7,
+            headerColor: /^#[0-9A-Fa-f]{6}$/.test(formState.headerColor) ? formState.headerColor : '#3B82F6',
+            accentColor: /^#[0-9A-Fa-f]{6}$/.test(formState.accentColor) ? formState.accentColor : '#00D4FF',
+            backgroundColor: /^#[0-9A-Fa-f]{6}$/.test(formState.backgroundColor) ? formState.backgroundColor : '#FFFFFF',
+            profileImage: dataUrl,
+            collectUserInfo: Boolean(formState.collectUserInfo),
+            formFields: validatedFormFields.length > 0 ? validatedFormFields : [{
+              id: `field-${Date.now()}`,
+              type: 'text',
+              label: 'Name',
+              required: true,
+              value: ''
+            }]
+          });
+
+          toast({ title: 'Avatar updated', description: 'Your agent avatar was saved.', className: 'bg-green-500 text-white' });
+        } catch (err) {
+          console.error('[AgentSettings] Failed to save avatar:', err);
+          toast({ title: 'Error', description: 'Failed to save avatar', className: 'bg-red-500 text-white' });
+        }
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [formState, params.id, updateAgent, toast]);
 
   // Remove a link from extracted content list (used in Fine-tuning UI)
   const removeLink = useCallback((index: number) => {
@@ -753,46 +896,71 @@ export default function AgentSettingsPage() {
                       </button>
                     </div>
 
-                    <div>
-                      <h4 className="text-sm font-medium mb-2 text-black">Extracted Links ({extractedContents.length})</h4>
-                      {extractedContents.length === 0 ? (
-                        <div className="text-center py-4 text-black text-sm">No links extracted yet</div>
-                      ) : (
+                    {extractedContents.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-medium mb-2 text-black">URL Extracted Content ({extractedContents.length})</h4>
                         <div className="space-y-3 mt-2">
                           {extractedContents.map((item, index) => {
                             const isOpen = expandedLinks.has(index);
                             return (
-                              <div key={index} className="p-4 border rounded-lg">
-                                <div className="flex items-center justify-between">
-                                  <a href={item.url} target="_blank" className="text-sm text-blue-600 hover:underline truncate max-w-[60%]" rel="noreferrer">{item.url}</a>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      className="inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-all border bg-white hover:bg-gray-50 h-7 px-3 py-1 text-gray-700"
-                                      onClick={() => setExpandedLinks(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(index)) next.delete(index); else next.add(index);
-                                        return next;
-                                      })}
+                              <div key={index} className="border rounded-md overflow-hidden">
+                                <div
+                                  className="flex items-center justify-between p-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                                  onClick={() => setExpandedLinks(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(index)) next.delete(index); else next.add(index);
+                                    return next;
+                                  })}
+                                >
+                                  <div className="flex items-center min-w-0 gap-2">
+                                    <a
+                                      href={item.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-sm text-blue-600 hover:underline truncate max-w-[60%]"
+                                      title={item.url}
                                     >
-                                      {isOpen ? 'Hide' : 'Show'}
+                                      {item.url}
+                                    </a>
+                                    <span className="ml-1 text-xs text-gray-500 whitespace-nowrap">({item.text.length.toLocaleString()} chars)</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <a
+                                      href={item.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="p-1 text-gray-500 hover:text-blue-500"
+                                      title="Open in new tab"
+                                    >
+                                      <ExternalLink className="h-4 w-4" />
+                                    </a>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); removeLink(index); }}
+                                      className="p-1 text-gray-500 hover:text-red-500 ml-1"
+                                      title="Remove"
+                                    >
+                                      {/* Using an inline SVG Trash or keep lucide Button? Keep existing Button style minimal */}
+                                      <Trash2 className="h-4 w-4" />
                                     </button>
-                                    <Button variant="ghost" size="sm" onClick={() => removeLink(index)}>Remove</Button>
+                                    <ChevronDown className={`h-4 w-4 ml-2 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                                   </div>
                                 </div>
-                                <p className={`mt-2 text-xs text-gray-500 ${isOpen ? '' : 'line-clamp-3'}`}>{item.text}</p>
                                 {isOpen && (
-                                  <div className="mt-2 max-h-56 overflow-auto border rounded bg-white p-3">
-                                    <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{item.text}</pre>
+                                  <div className="p-3 bg-white border-t">
+                                    <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-56 overflow-auto">{item.text}</pre>
                                   </div>
                                 )}
                               </div>
                             );
                           })}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+                    {/* Saved URL Entries */}
                     <div className="mt-6">
-                      <h4 className="text-sm font-medium mb-2 text-black">Saved URL Entries {knowledgeEntries === undefined ? '' : `(${urlEntries.length})`}</h4>
+                      <h4 className="text-sm font-medium mb-2 text-black">Saved URL Entries ({knowledgeEntries === undefined ? 0 : urlEntries.length})</h4>
                       {knowledgeEntries === undefined ? (
                         <div className="text-sm text-gray-600">Loading...</div>
                       ) : urlEntries.length === 0 ? (
@@ -809,6 +977,15 @@ export default function AgentSettingsPage() {
                                   <div className="text-xs text-gray-500">
                                     {new Date(entry.createdAt).toLocaleString()}
                                   </div>
+                                  <a
+                                    href={(entry.input || '').toString().replace(/^url:/, '')}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="p-1 text-gray-500 hover:text-blue-500"
+                                    title="Open in new tab"
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </a>
                                   <button
                                     className="inline-flex items-center justify-center gap-2 rounded-md text-xs font-medium transition-all border bg-white hover:bg-gray-50 h-7 px-3 py-1 text-gray-700"
                                     onClick={() => setExpandedEntries(prev => {
@@ -869,19 +1046,19 @@ export default function AgentSettingsPage() {
                     </label>
                   </div>
 
-                  {/* Knowledge Base Entries */}
+                  {/* Knowledge Base Entries (Documents only) */}
                   <div className="mt-6">
-                    <h4 className="text-sm font-medium mb-2 text-black">Knowledge Base Entries</h4>
+                    <h4 className="text-sm font-medium mb-2 text-black">Knowledge Base Entries {knowledgeEntries === undefined ? '' : `(${docEntries.length})`}</h4>
                     {knowledgeEntries === undefined ? (
                       <div className="text-sm text-gray-600">Loading...</div>
-                    ) : knowledgeEntries.length === 0 ? (
+                    ) : docEntries.length === 0 ? (
                       <div className="text-center py-4 text-black text-sm border border-dashed rounded-md bg-gray-50">
                         <p>No knowledge entries yet</p>
-                        <p className="text-xs text-gray-500 mt-1">Extract a URL or upload files to populate knowledge</p>
+                        <p className="text-xs text-gray-500 mt-1"> Upload files to populate knowledge</p>
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {knowledgeEntries.map((entry) => (
+                        {docEntries.map((entry) => (
                           <div key={entry._id} className="p-4 border rounded-lg bg-white">
                             <div className="flex items-center justify-between">
                               <div className="text-sm font-medium text-black truncate max-w-[70%]">
@@ -952,12 +1129,24 @@ export default function AgentSettingsPage() {
                   <div className="relative mb-4">
                     <div
                       className="h-48 w-48 rounded-full flex items-center justify-center overflow-hidden relative group bg-gray-100 border-2 border-gray-200"
-                      style={{ cursor: 'grab', touchAction: 'none', backgroundColor: formState.headerColor }}
+                      style={{ cursor: 'grab', touchAction: 'none', backgroundColor: agent?.profileImage ? 'transparent' : formState.headerColor }}
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      <div className="w-full h-full flex items-center justify-center">
-                        <span className="text-white font-bold text-6xl">{(formState.initials || formState.name || 'AA').slice(0, 2).toUpperCase()}</span>
-                      </div>
+                      {agent?.profileImage ? (
+                        <div className="relative w-full h-full">
+                          <Image
+                            src={agent.profileImage}
+                            alt="Agent avatar"
+                            fill
+                            sizes="100vw"
+                            className="object-cover object-center block"
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <span className="text-white font-bold text-6xl">{(formState.initials || formState.name || 'AA').slice(0, 2).toUpperCase()}</span>
+                        </div>
+                      )}
                       <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center transition-all duration-200 cursor-pointer">
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity text-center p-2">
                           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-upload h-8 w-8 text-white mx-auto mb-1" aria-hidden="true"><path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>
@@ -975,7 +1164,7 @@ export default function AgentSettingsPage() {
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-upload h-4 w-4 mr-2" aria-hidden="true"><path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>
                     Upload Photo
                   </button>
-                  <input accept="image/*" className="hidden" type="file" ref={fileInputRef} onChange={handleFileUpload} />
+                  <input accept="image/*" className="hidden" type="file" ref={fileInputRef} onChange={handleAvatarUpload} />
                   <div className="mt-1">
                     <input
                       placeholder="Enter initials (e.g., AA)"
@@ -1200,28 +1389,24 @@ export default function AgentSettingsPage() {
                   
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
                     {[
-                      { id: 'wordpress', name: 'WordPress' },
-                      { id: 'shopify', name: 'Shopify' },
-                      { id: 'whatsapp', name: 'WhatsApp' },
-                      { id: 'html-css', name: 'HTML' },
-                      { id: 'instagram', name: 'Instagram' },
-                      { id: 'messenger', name: 'Messenger' },
-                      { id: 'telegram', name: 'Telegram' },
-                      { id: 'discord', name: 'Discord' },
+                      { id: 'shopify', name: 'Shopify', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/0/0e/Shopify_logo_2018.svg' },
+                      { id: 'html-css', name: 'HTML', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg' },
+                      { id: 'telegram', name: 'Telegram', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg' },
+                      { id: 'discord', name: 'Discord', logoUrl: 'https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png' },
                     ].map((plugin) => (
-                      <div 
-                        key={plugin.id} 
+                      <div
+                        key={plugin.id}
                         className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
                         onClick={() => handlePluginClick(plugin)}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center">
-                            {plugin.id === 'shopify' ? (
+                            {plugin.logoUrl ? (
                               <div className="h-10 w-10 rounded bg-white border flex items-center justify-center mr-3 p-1">
                                 <div className="relative h-10 w-10">
                                   <Image
-                                    alt="Shopify logo"
-                                    src="https://upload.wikimedia.org/wikipedia/commons/0/0e/Shopify_logo_2018.svg"
+                                    alt={`${plugin.name} logo`}
+                                    src={plugin.logoUrl}
                                     className="object-contain h-full w-full"
                                     width={40}
                                     height={40}
@@ -1235,9 +1420,7 @@ export default function AgentSettingsPage() {
                             )}
                             <div>
                               <p className="font-medium text-black">{plugin.name}</p>
-                              <p className="text-xs text-black">
-                                {plugin.id === 'shopify' ? 'Shopify embed snippet' : 'Plugin'}
-                              </p>
+                              <p className="text-xs text-black">Plugin</p>
                             </div>
                           </div>
                         </div>
@@ -1254,23 +1437,85 @@ export default function AgentSettingsPage() {
           <div className="flex-1 min-h-0">
             <div className="h-full border rounded-lg overflow-hidden">
               <div className="h-full w-full flex items-center justify-center p-4">
-                <SimpleChatForm
-                  formFields={(Array.isArray(formState.formFields) ? formState.formFields : []).map(f => ({
-                    id: String(f.id),
-                    label: String(f.label || 'Field'),
-                    type: String(f.type || 'text'),
-                    required: Boolean(f.required),
-                    value: f.value ? String(f.value) : ''
-                  }))}
-                  onFormSubmitAction={async () => { return; }}
-                  _assistantName={formState.name || 'AI Assistant'}
-                  _welcomeMessage={formState.welcomeMessage || `👋 Thanks for your information! How can I help you today?`}
-                  _headerColor={formState.headerColor}
-                  _accentColor={formState.accentColor}
-                  _backgroundColor={formState.backgroundColor}
-                  _profileImage={''}
-                  className="w-full h-full"
-                />
+                {(formState.collectUserInfo && (formState.formFields?.length || 0) > 0 && !showChat) ? (
+                  <SimpleChatForm
+                    formFields={(Array.isArray(formState.formFields) ? formState.formFields : []).map(f => ({
+                      id: String(f.id),
+                      label: String(f.label || 'Field'),
+                      type: String(f.type || 'text'),
+                      required: Boolean(f.required),
+                      value: f.value ? String(f.value) : ''
+                    }))}
+                    onFormSubmitAction={async (data: Record<string, string>) => {
+                      try {
+                        // Ensure a widget session exists for this agent
+                        let sessionId = widgetSessionId;
+                        if (!sessionId && params?.id) {
+                          const res = await apiClient.createWidgetSession(String(params.id));
+                          sessionId = res.sessionId;
+                          setWidgetSessionId(sessionId);
+                        }
+                        if (sessionId) {
+                          await apiClient.saveWidgetUserInfo(sessionId, data);
+                        }
+                      } catch (e) {
+                        console.error('[AgentSettings] saveWidgetUserInfo failed:', e);
+                      }
+                      setShowChat(true);
+                      return; // Explicit
+                    }}
+                    _assistantName={formState.name || 'AI Assistant'}
+                    _welcomeMessage={formState.welcomeMessage || `👋 Thanks for your information! How can I help you today?`}
+                    _headerColor={formState.headerColor}
+                    _accentColor={formState.accentColor}
+                    _backgroundColor={formState.backgroundColor}
+                    _profileImage={(agent?.profileImage as string) || ''}
+                    className="w-full h-full"
+                  />
+                ) : (
+                  <ChatInterface
+                    key={`chat-${formState.systemPrompt}`}
+                    assistantName={formState.name || 'AI Assistant'}
+                    profileImage={agent?.profileImage as string | undefined}
+                    welcomeMessage={formState.welcomeMessage || '👋 Hi there! How can I help you today?'}
+                    headerColor={formState.headerColor}
+                    accentColor={formState.accentColor}
+                    onSendMessage={async (message: string) => {
+                      try {
+                        // If the prompt changed since the last message, force a fresh session
+                        if (lastPromptUsedRef.current !== (formState.systemPrompt || "")) {
+                          setWidgetSessionId(null);
+                          lastPromptUsedRef.current = formState.systemPrompt || "";
+                        }
+                        let sessionId = widgetSessionId;
+                        if (!sessionId && params?.id) {
+                          const res = await apiClient.createWidgetSession(String(params.id));
+                          sessionId = res.sessionId;
+                          setWidgetSessionId(sessionId);
+                        }
+                        if (!sessionId || !params?.id) {
+                          return 'Sorry, session is not ready.';
+                        }
+                        const resp = await apiClient.sendWidgetMessage(
+                          sessionId,
+                          String(params.id),
+                          message,
+                          [],
+                          formState.systemPrompt // preview unsaved system prompt
+                        );
+                        return resp.reply || '...';
+                      } catch (e) {
+                        console.error('[AgentSettings] sendWidgetMessage failed:', e);
+                        return 'Sorry, I had trouble responding.';
+                      }
+                    }}
+                    onReload={() => {
+                      setWidgetSessionId(null);
+                      setShowChat(true);
+                    }}
+                    className="w-full h-full"
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -1298,14 +1543,14 @@ export default function AgentSettingsPage() {
                 <h4 className="font-medium mb-2">Add to your Shopify theme</h4>
                 <p className="text-sm text-gray-600 mb-2">Paste this snippet into your Shopify theme (for example: Online Store → Themes → Edit code → theme.liquid before <code>&lt;/body&gt;</code>, or use a Custom Liquid section).</p>
                 <pre className="bg-gray-100 p-4 rounded-md overflow-auto text-sm whitespace-pre-wrap break-words">
-{`<script src="${embedOrigin}/widget.js" data-bot-id="${params.id}"></script>`}
+{`<script src="https://improved-happiness-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`}
                 </pre>
                 <div className="flex justify-end mt-2">
                   <Button
                     variant="secondary"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(`<script src="${embedOrigin}/widget.js" data-bot-id="${params.id}"></script>`)
+                        await navigator.clipboard.writeText(`<script src="https://improved-happiness-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`)
                         toast({ title: 'Copied', description: 'Shopify snippet copied to clipboard.' })
                       } catch (e) {
                         console.error('Copy failed', e)
@@ -1363,8 +1608,24 @@ export default function AgentSettingsPage() {
                 <h4 className="font-medium mb-2">Embed the widget</h4>
                 <p className="text-sm text-gray-600 mb-2">Copy and paste this script tag into your site (typically before <code>&lt;/body&gt;</code>):</p>
                 <pre className="bg-gray-100 p-4 rounded-md overflow-auto text-sm whitespace-pre-wrap break-words">
-{`<script src="${embedOrigin}/chat-widget.js" data-bot-id="${params.id}"></script>`}
+{`<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`}
                 </pre>
+                <div className="flex justify-end mt-2">
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(`<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`)
+                        toast({ title: 'Copied', description: 'HTML/CSS embed snippet copied to clipboard.' })
+                      } catch (e) {
+                        console.error('Copy failed', e)
+                        toast({ title: 'Copy failed', description: 'Unable to copy snippet.', variant: 'destructive' })
+                      }
+                    }}
+                  >
+                    Copy Snippet
+                  </Button>
+                </div>
               </div>
             </div>
           )}

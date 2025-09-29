@@ -1,6 +1,6 @@
 'use server'
 
-import { auth } from "@clerk/nextjs/server"
+import { auth, clerkClient } from "@clerk/nextjs/server"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 
@@ -22,16 +22,8 @@ export async function syncUser() {
       return { success: false, error: 'User not authenticated' }
     }
     
-    // Get user data from Clerk
-    const user = await fetch(
-      `https://api.clerk.com/v1/users/${userId}`, 
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.CLERK_SECRET_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    ).then(res => res.json())
+    // Get user data from Clerk using server SDK (no env key required here)
+    const user = await clerkClient.users.getUser(userId)
     
     if (!user) {
       return { success: false, error: 'User not found' }
@@ -40,9 +32,9 @@ export async function syncUser() {
     const convex = getConvexClient()
     await convex.mutation(api.users.createOrUpdateUser, {
       userId: user.id,
-      email: user.email_addresses[0]?.email_address,
-      name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || undefined,
-      imageUrl: user.image_url,
+      email: user.emailAddresses?.[0]?.emailAddress ?? undefined,
+      name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || undefined,
+      imageUrl: user.imageUrl,
     })
     
     return { success: true }
@@ -51,3 +43,4 @@ export async function syncUser() {
     return { success: false, error: 'Failed to sync user' }
   }
 }
+

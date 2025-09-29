@@ -120,3 +120,6 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Import pricing design system and utilities (overrides come last) */
+@import "../components/pricing/index.css";

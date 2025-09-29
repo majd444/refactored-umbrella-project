@@ -29,6 +29,24 @@ export const saveFineTuningOutput = mutation({
   },
 });
 
+// Get total character usage for an agent's knowledge base (for current user)
+export const getAgentKnowledgeUsage = query({
+  args: { agentId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const userId = identity.subject;
+    const rows = await ctx.db
+      .query("fineTuningOutputs")
+      .withIndex("by_agent", (q) => q.eq("agentId", args.agentId).eq("userId", userId))
+      .collect();
+    const totalChars = rows.reduce((sum, r: any) => sum + (typeof r.output === 'string' ? r.output.length : 0), 0);
+    const totalEntries = rows.length;
+    return { totalChars, totalEntries } as const;
+  },
+});
+
 // Get fine-tuning outputs for a specific agent
 export const getAgentFineTuningOutputs = query({
   args: {

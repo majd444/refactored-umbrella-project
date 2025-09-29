@@ -14,6 +14,15 @@ export interface Agent {
   profileImage?: string;
   temperature?: number;
   model?: string;
+  // Pre-chat configuration
+  collectUserInfo?: boolean;
+  formFields?: Array<{
+    id: string;
+    type: string;
+    label: string;
+    required: boolean;
+    value?: string;
+  }>;
 }
 
 export interface Message {
@@ -50,6 +59,7 @@ interface WidgetChatRequest extends ChatRequest {
   agentId: string;
   message: string;
   history?: Message[];
+  systemPromptOverride?: string;
 }
 
 // Error handling
@@ -100,6 +110,22 @@ export const apiClient = {
       throw error;
     }
 
+    return response.json();
+  },
+
+  /**
+   * Save pre-chat user info to the session metadata for the widget flow
+   */
+  async saveWidgetUserInfo(sessionId: string, userInfo: Record<string, string>): Promise<{ ok: boolean }> {
+    const response = await fetch(`${API_BASE_URL}/api/chat/widget/saveUserInfo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, userInfo }),
+    });
+    if (!response.ok) {
+      const error = await this.parseError(response);
+      throw error;
+    }
     return response.json();
   },
 
@@ -174,13 +200,15 @@ export const apiClient = {
     sessionId: string,
     agentId: string,
     message: string,
-    history: Message[] = []
+    history: Message[] = [],
+    systemPromptOverride?: string
   ): Promise<ChatResponse> {
     const payload: WidgetChatRequest = {
       sessionId,
       agentId,
       message,
       history,
+      systemPromptOverride,
     };
 
     const response = await fetch(`${API_BASE_URL}/api/chat/widget/chat`, {
@@ -212,7 +240,7 @@ export const apiClient = {
         response.status,
         errorData.details
       );
-    } catch (_error) {
+    } catch {
       return new ApiError(
         `HTTP ${response.status}: ${response.statusText}`,
         response.status

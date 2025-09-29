@@ -14,8 +14,10 @@ interface ChatInterfaceProps {
   welcomeMessage: string;
   headerColor: string;
   accentColor: string;
-  onSendMessage: (message: string) => void;
-  onClose: () => void;
+  // Should return the assistant's reply to display
+  onSendMessage: (message: string) => Promise<string | void> | string | void;
+  // Called when user clicks the reload button in the header
+  onReload?: () => void;
   className?: string;
 }
 
@@ -26,7 +28,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   headerColor,
   accentColor = '#3B82F6', // Default blue color if not provided
   onSendMessage,
-  onClose,
+  onReload,
   className = ''
 }) => {
   const [messages, setMessages] = useState<Message[]>([
@@ -40,7 +42,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleReload = () => {
+    // Reset local chat state to initial welcome message
+    setMessages([
+      {
+        id: '1',
+        content: welcomeMessage,
+        role: 'assistant',
+        timestamp: new Date()
+      }
+    ]);
+    setInputValue('');
+    // Let parent clear any external session state
+    onReload?.();
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim()) return;
 
@@ -52,8 +69,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     };
 
     setMessages(prev => [...prev, newMessage]);
-    onSendMessage(inputValue);
+    const outgoing = inputValue;
     setInputValue('');
+
+    try {
+      const maybeReply = await onSendMessage(outgoing);
+      const replyText = typeof maybeReply === 'string' && maybeReply.trim().length > 0
+        ? maybeReply
+        : '...';
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        content: replyText,
+        role: 'assistant',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (err) {
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        content: 'Sorry, I had trouble responding.',
+        role: 'assistant',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+      console.error('[ChatInterface] onSendMessage failed:', err);
+    }
   };
 
   useEffect(() => {
@@ -67,21 +107,37 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header */}
-      {/* Header */}
       <div className="p-4 flex items-center justify-between border-b" style={{ backgroundColor: headerColor }}>
         <div className="flex items-center">
-          <div className="w-10 h-10 rounded-full bg-gray-300 mr-3 flex items-center justify-center text-white">
-            {assistantName.charAt(0).toUpperCase()}
-          </div>
+          {profileImage ? (
+            <Image
+              src={profileImage}
+              alt={assistantName}
+              width={40}
+              height={40}
+              className="rounded-full mr-3"
+            />
+          ) : (
+            <div
+              className="w-10 h-10 rounded-full mr-3 flex items-center justify-center text-white"
+              style={{ backgroundColor: accentColor }}
+            >
+              {assistantName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <h2 className="text-lg font-semibold text-white">{assistantName}</h2>
         </div>
-        <button 
-          onClick={onClose}
+        <button
+          onClick={handleReload}
+          title="Reload chat"
           className="text-white hover:bg-white/20 p-2 rounded-full"
         >
+          {/* Refresh/Reload icon */}
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10" />
+            <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14" />
           </svg>
         </button>
       </div>

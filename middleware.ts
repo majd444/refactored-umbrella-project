@@ -6,6 +6,8 @@ const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
   '/create-agent',
   '/agent(.*)',
+  '/pricing',
+  '/team(.*)',
 ]);
 
 // Define public routes that don't require authentication

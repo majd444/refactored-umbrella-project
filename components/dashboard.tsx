@@ -19,11 +19,22 @@ export default function Dashboard() {
     toast.success('User ID copied to clipboard')
   }
 
-  // Fetch agents for the current user
-  const agents = useQuery(api.agents.list) || [] as Doc<"agents">[]
-  const isLoading = !isLoaded || agents === undefined
+  // Fetch agents for the current user (only after Clerk is ready & signed in)
+  const shouldQuery = isLoaded && !!userId
+  const agents = (useQuery(api.agents.list, shouldQuery ? {} : "skip") || []) as Doc<"agents">[]
+  const me = useQuery(api.users.getMe, shouldQuery ? {} : "skip")
+  const totalOps = useQuery(api.sessions.countOperationsByOwner, shouldQuery ? {} : "skip") as number | undefined
+  const isLoading = !isLoaded || !shouldQuery || agents === undefined || me === undefined
 
-  if (!isLoaded) {
+  const plan = (me?.plan as "free" | "basic" | "pro" | undefined) || "free"
+  const planLimits: Record<"free" | "basic" | "pro", number> = { free: 1, basic: 3, pro: 5 }
+  const maxAgents = planLimits[plan]
+  const usedAgents = agents?.length || 0
+  const displayedAgents = (agents || []).slice(0, maxAgents)
+  const hiddenAgents = Math.max(0, usedAgents - displayedAgents.length)
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1)
+
+  if (!isLoaded || !userId) {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center h-64">
@@ -63,7 +74,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-md font-medium text-black">Current plan: Free</CardTitle>
+            <CardTitle className="text-md font-medium text-black">Current plan: {planLabel}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-3 gap-4">
@@ -72,12 +83,12 @@ export default function Dashboard() {
                 <p className="text-sm text-black">Current cost</p>
               </div>
               <div>
-                <p className="text-2xl font-bold">0.00</p>
-                <p className="text-sm text-black">Usage</p>
+                <p className="text-2xl font-bold">{usedAgents} / {maxAgents}</p>
+                <p className="text-sm text-black">Chatbots used</p>
               </div>
             </div>
-            <Button className="mt-4 w-full sm:w-auto" variant="outline">
-              Upgrade plan
+            <Button asChild className="mt-4 w-full sm:w-auto" variant="outline">
+              <Link href="/pricing">Upgrade plan</Link>
             </Button>
           </CardContent>
         </Card>
@@ -87,28 +98,31 @@ export default function Dashboard() {
             <CardTitle className="text-md font-medium text-black">Operations</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-2xl font-bold">0</p>
-                <p className="text-sm text-black">Current operations</p>
+            {totalOps === undefined ? (
+              <div className="text-sm text-gray-600">Loading…</div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-2xl font-bold">{totalOps}</p>
+                  <p className="text-sm text-black">Total operations (messages)</p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-2xl font-bold text-blue-500">Monthly</p>
-                <p className="text-sm text-black">Billing interval</p>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
       <Card className="mb-6">
         <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <div>
+          <div className="flex items-center gap-3">
             <CardTitle className="text-lg font-medium text-black">Your Chatbots</CardTitle>
+            <span className="text-xs rounded-full px-2 py-1 bg-gray-100 text-gray-700">
+              {usedAgents} / {maxAgents}
+            </span>
             <p className="text-sm text-gray-500 mt-1">Manage and interact with your AI agents</p>
           </div>
-          <Button asChild size="sm" className="shrink-0">
-            <Link href="/create-agent" className="flex items-center">
+          <Button asChild size="sm" className="shrink-0" disabled={usedAgents >= maxAgents} title={usedAgents >= maxAgents ? `Plan limit reached (${maxAgents}). Upgrade to add more.` : undefined}>
+            <Link href={usedAgents >= maxAgents ? "#" : "/create-agent"} className="flex items-center">
               <Plus className="w-4 h-4 mr-2" />
               New Chatbot
             </Link>
@@ -132,7 +146,7 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-          ) : agents.length === 0 ? (
+          ) : displayedAgents.length === 0 ? (
             <div className="text-center py-12">
               <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900">No chatbots yet</h3>
@@ -149,7 +163,7 @@ export default function Dashboard() {
           ) : (
             <>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {agents.map((agent) => (
+                {displayedAgents.map((agent) => (
                   <div key={agent._id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
                     <div className="flex justify-between items-start mb-3">
                       <div className="pr-2">
@@ -175,9 +189,9 @@ export default function Dashboard() {
                     </div>
                     <div className="flex gap-1 mt-1">
                       <Button variant="outline" size="sm" className="flex-1 h-6 text-xs px-1" asChild>
-                        <Link href={`/agent/${agent._id}`} className="flex items-center justify-center">
+                        <Link href={`/agent/${agent._id}/history`} className="flex items-center justify-center">
                           <MessageSquare className="h-2.5 w-2.5 mr-0.5" />
-                          Chat
+                          History
                         </Link>
                       </Button>
                       <Button variant="outline" size="sm" className="flex-1 h-6 text-xs px-1" asChild>
@@ -192,9 +206,15 @@ export default function Dashboard() {
               </div>
               
               <div className="mt-6 border-t pt-4">
-                <p className="text-sm text-gray-500 text-center">
-                  Showing {agents.length} chatbot{agents.length !== 1 ? 's' : ''}
-                </p>
+                {hiddenAgents > 0 ? (
+                  <p className="text-sm text-gray-500 text-center">
+                    Showing {displayedAgents.length} of {usedAgents} chatbots. Upgrade to Pro to access all.
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-500 text-center">
+                    Showing {displayedAgents.length} chatbot{displayedAgents.length !== 1 ? 's' : ''}
+                  </p>
+                )}
               </div>
             </>
           )}

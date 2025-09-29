@@ -56,6 +56,62 @@ function extractLinksFromHtml(html: string, baseUrl: string): string[] {
   return Array.from(links);
 }
 
+// Convert HTML to readable plain text
+function htmlToReadableText(html: string): string {
+  const $ = cheerio.load(html, { decodeEntities: true });
+
+  // Remove noise
+  $('script, style, noscript, svg, iframe, header, footer, nav, meta, link').remove();
+
+  // Convert <br> to newlines
+  $('br').replaceWith('\n');
+
+  // Build lines from common content tags
+  const lines: string[] = [];
+  const push = (s?: string) => {
+    const t = (s || '').replace(/\u00A0/g, ' ').trim();
+    if (t) lines.push(t);
+  };
+
+  // Headings, paragraphs, list items, table cells
+  $('h1, h2, h3, h4, h5, h6, p, li, td, th').each((_i, el) => {
+    const tag = el.tagName?.toLowerCase() || '';
+    const text = $(el).text();
+    // Emphasize headings with spacing
+    if (/^h[1-6]$/.test(tag)) {
+      push('');
+      push(text);
+      push('');
+    } else if (tag === 'li') {
+      push(`- ${text}`);
+    } else {
+      push(text);
+    }
+  });
+
+  // Fallback: if nothing captured, take body text
+  if (lines.length === 0) {
+    const bodyText = $('body').text();
+    lines.push(bodyText);
+  }
+
+  // Normalize whitespace
+  let out = lines.join('\n');
+  out = out
+    .replace(/[\t\r]+/g, ' ')
+    .replace(/[ \u00A0]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .trim();
+
+  // If still looks like raw HTML (doctype etc.), fallback to a simple body text
+  if (/<!DOCTYPE|<html|<head|<body/i.test(out)) {
+    out = $('body').text().replace(/[\t\r]+/g, ' ').replace(/[ ]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -94,10 +150,11 @@ export async function POST(req: NextRequest) {
 
     const html = await response.text();
     const links = extractLinksFromHtml(html, url);
-    
+    const text = htmlToReadableText(html);
+
     return new NextResponse(JSON.stringify({
       success: true,
-      text: html,
+      text,
       structured: {
         links: links.map(link => ({
           url: link,

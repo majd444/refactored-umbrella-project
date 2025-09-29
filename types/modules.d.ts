@@ -39,8 +39,8 @@ declare module '@/components/chat-interface' {
     welcomeMessage: string;
     headerColor: string;
     accentColor: string;
-    onSendMessage: (message: string) => void;
-    onClose: () => void;
+    onSendMessage: (message: string) => Promise<string | void> | string | void;
+    onReload?: () => void;
     className?: string;
   }
 

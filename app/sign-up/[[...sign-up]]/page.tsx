@@ -1,5 +1,5 @@
 import { SignUp } from "@clerk/nextjs"
- 
+
 export default function Page() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -10,8 +10,8 @@ export default function Page() {
             footerActionLink: 'text-blue-600 hover:text-blue-700',
           },
         }}
-        fallbackRedirectUrl="/onboarding"
-        forceRedirectUrl="/onboarding"
+        fallbackRedirectUrl="/pricing"
+        forceRedirectUrl="/pricing"
       />
     </div>
   )

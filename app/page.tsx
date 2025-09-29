@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import Head from "next/head"
 import { SignedIn, UserButton } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
 import Header from "@/components/Header"
@@ -27,11 +26,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Head>
-        <title>proaichats - AI Agents for Your Business</title>
-        <meta name="description" content="Build, customize, and deploy AI agents for your business needs without writing a single line of code." />
-        <link rel="icon" href="/favicon.ico" />
-      </Head>
 
       <Header onOpenAuth={handleOpenAuth} />
       
@@ -60,3 +54,4 @@ export default function Home() {
     </div>
   )
 }
+

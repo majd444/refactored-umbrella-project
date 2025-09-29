@@ -59,30 +59,89 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     return client;
   }, []);
 
-  const [authStatus, setAuthStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [, setAuthStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('unauthenticated');
+  const { isLoaded: clerkLoaded, getToken } = useAuth();
+  const expectedIssuer = process.env.NEXT_PUBLIC_CLERK_JWT_ISSUER?.replace(/\/$/, '');
+  const expectedAudience = 'convex';
 
-  // Test the connection when the client is ready
+  // Configure auth on the client (when Clerk is present) and test the connection
   useEffect(() => {
     if (!convexClient) return;
 
-    const testConnection = async () => {
+    let cancelled = false;
+
+    const setupAndTest = async () => {
       try {
+        // If Clerk is configured, wait for it to load and attach token fetcher
+        if (hasClerkEnv) {
+          if (!clerkLoaded) {
+            // Wait for Clerk to load; don't block rendering
+            return;
+          }
+          // Attach token getter so subsequent queries include auth
+          convexClient.setAuth(async () => {
+            try {
+              const token = await getToken({ template: 'convex' });
+              if (!token) {
+                console.warn('[Convex] Clerk returned no token for template "convex". Proceeding unauthenticated.');
+                return null;
+              }
+              // Soft-validate token issuer/audience client-side to avoid sending a bad token
+              try {
+                const parts = token.split('.');
+                if (parts.length === 3) {
+                  const payloadJson = JSON.parse(atob(parts[1]));
+                  const iss: string | undefined = payloadJson.iss?.replace?.(/\/$/, '') || payloadJson.iss;
+                  const aud = payloadJson.aud;
+                  if (expectedIssuer && iss && iss !== expectedIssuer) {
+                    console.warn('[Convex] Token issuer mismatch. Expected:', expectedIssuer, 'Got:', iss, 'Proceeding unauthenticated.');
+                    return null;
+                  }
+                  if (aud && aud !== expectedAudience) {
+                    console.warn('[Convex] Token audience mismatch. Expected:', expectedAudience, 'Got:', aud, 'Proceeding unauthenticated.');
+                    return null;
+                  }
+                }
+              } catch (e) {
+                console.warn('[Convex] Failed to parse Clerk token for sanity check; sending token as-is.');
+              }
+              return token;
+            } catch (e) {
+              console.error('[Convex] Failed to fetch Clerk token, proceeding unauthenticated:', e);
+              return null;
+            }
+          });
+        }
+
         console.log('🔍 [Convex] Testing connection...');
-        const testResult = await convexClient.query(api.testQueries.getAuthStatus);
-        console.log('🔍 [Convex] Auth test result:', testResult);
-        setAuthStatus(testResult.isAuthenticated ? 'authenticated' : 'unauthenticated');
+        const testResult = await convexClient.query(api.testQueries.getAuthStatus).catch((e) => {
+          console.debug('[Convex] Auth test query failed silently (non-blocking):', e);
+          return null;
+        });
+        if (!cancelled && testResult) {
+          console.log('🔍 [Convex] Auth test result:', testResult);
+          setAuthStatus(testResult.isAuthenticated ? 'authenticated' : 'unauthenticated');
+        }
       } catch (error) {
-        console.error('❌ [Convex] Connection test failed:', error);
-        setAuthStatus('unauthenticated');
+        if (!cancelled) {
+          console.debug('❌ [Convex] Connection test failed (non-blocking):', error);
+          // On repeated auth failures, clear auth to avoid a bad JWT causing disconnect loops
+          try {
+            convexClient.clearAuth?.();
+          } catch {}
+          // Don't force a loading state; keep current status to avoid jank
+        }
       }
     };
 
-    testConnection();
-    
-    // Test connection every 5 minutes
-    const interval = setInterval(testConnection, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [convexClient]);
+    setupAndTest();
+
+    const interval = setInterval(setupAndTest, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [convexClient, hasClerkEnv, clerkLoaded, getToken]);
   
   // Show error if client initialization fails
   if (!convexClient) {
@@ -129,31 +188,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     return <ErrorDisplay />;
   }
   
-  // Show loading state while checking auth
-  const LoadingSpinner = () => {
-    const [mounted, setMounted] = useState(false);
-    
-    useEffect(() => {
-      setMounted(true);
-    }, []);
-    
-    if (!mounted || authStatus !== 'loading') {
-      return null;
-    }
-    
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background p-4">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Verifying authentication...</p>
-        </div>
-      </div>
-    );
-  };
-  
-  if (authStatus === 'loading') {
-    return <LoadingSpinner />;
-  }
+  // Do not block rendering based on authStatus; render app immediately.
 
   // When Clerk is not configured, fallback to plain ConvexProvider
   if (!hasClerkEnv) {

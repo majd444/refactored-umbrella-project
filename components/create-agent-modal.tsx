@@ -355,6 +355,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
           headerColor,
           accentColor,
           backgroundColor,
+          profileImage: profileImage || undefined,
           collectUserInfo,
           formFields: formFieldsData
         });
@@ -369,6 +370,7 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
           headerColor,
           accentColor,
           backgroundColor,
+          profileImage: profileImage || undefined,
           collectUserInfo,
           formFields: formFieldsData
         });
@@ -979,9 +981,7 @@ const FineTuningTab: React.FC<FineTuningTabProps> = ({
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="text-center py-4 text-black text-sm">No links extracted yet</div>
-            )}
+            ) : null}
             {extractedContents.filter(c => c.url.startsWith('http')).length > 0 && (
               <div className="mt-4">
                 <h4 className="text-sm font-medium text-black mb-2">URL Extracted Content ({extractedContents.filter(c => c.url.startsWith('http')).length})</h4>
@@ -1282,6 +1282,7 @@ const StyleTab: React.FC<StyleTabProps> = ({
         <AvatarPreview
           profileImage={profileImage}
           headerColor={headerColor}
+          initials={initials}
           position={position}
           scale={scale}
           isDragging={isDragging}
@@ -1386,6 +1387,7 @@ const StyleTab: React.FC<StyleTabProps> = ({
 interface AvatarPreviewProps {
   profileImage: string | null
   headerColor: string
+  initials: string
   position: { x: number; y: number }
   scale: number
   isDragging: boolean
@@ -1397,7 +1399,7 @@ interface AvatarPreviewProps {
 }
 
 const AvatarPreview: React.FC<AvatarPreviewProps> = ({
-  profileImage, headerColor, position, scale, isDragging,
+  profileImage, headerColor, initials, position, scale, isDragging,
   onMouseDown, onMouseMove, onMouseUp, onWheel, onUploadClick
 }) => {
   // Debug log to check the profileImage prop
@@ -1451,7 +1453,7 @@ const AvatarPreview: React.FC<AvatarPreviewProps> = ({
             </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <span className="text-white font-bold text-6xl">AA</span>
+              <span className="text-white font-bold text-6xl">{initials || 'AA'}</span>
             </div>
           )}
           <div
@@ -1580,7 +1582,7 @@ interface PluginsTabProps {
 const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
   const router = useRouter();
   const [showEmbed, setShowEmbed] = React.useState(false)
-  const [snippet, setSnippet] = React.useState('<script src="https://fghjyy.vercel.app/chat-widget.js" data-bot-id="USER_BOT_ID"></script>')
+  const [snippet, setSnippet] = React.useState('<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
   const [isEmbedLoading, setIsEmbedLoading] = React.useState(false)
   const [embedError, setEmbedError] = React.useState<string | null>(null)
 
@@ -1615,8 +1617,8 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const embedOrigin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://fghjyy.vercel.app'
-        setSnippet(`<script src="${embedOrigin}/chat-widget.js" data-bot-id="${id}"></script>`)
+        const embedOrigin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        setSnippet(`<script src="${embedOrigin}/widget.js" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
         setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')

@@ -8,12 +8,15 @@ export default defineSchema({
     email: v.optional(v.string()),
     name: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    plan: v.optional(v.union(v.literal("free"), v.literal("basic"), v.literal("pro"))),
+    stripeCustomerId: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     lastLogin: v.optional(v.number()),
     lastSignIn: v.optional(v.number())
   })
   .index("by_userId", ["userId"])
-  .index("by_email", ["email"]),
+  .index("by_email", ["email"])
+  .index("by_stripe", ["stripeCustomerId"]),
   
   // Chat sessions
   chatSessions: defineTable({
@@ -43,6 +46,9 @@ export default defineSchema({
     userId: v.string(),
     theme: v.optional(v.union(v.literal("light"), v.literal("dark"))),
     language: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    companyName: v.optional(v.string()),
+    companyAddress: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   // Agents table

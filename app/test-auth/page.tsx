@@ -17,7 +17,7 @@ export default function TestAuthPage() {
   const [tokenInfo, setTokenInfo] = useState<TokenPayload | null>(null);
   
   // Test Convex query using the existing getAuthStatus
-  const authStatus = useQuery(api.test.getAuthStatus);
+  const authStatus = useQuery(api.testQueries.getAuthStatus);
   
   // Get environment variables for debugging
   const envVars = {

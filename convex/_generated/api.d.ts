@@ -25,6 +25,7 @@ import type * as sessions from "../sessions.js";
 import type * as telegramConfigs from "../telegramConfigs.js";
 import type * as test from "../test.js";
 import type * as testQueries from "../testQueries.js";
+import type * as userSettings from "../userSettings.js";
 import type * as users from "../users.js";
 
 /**
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   telegramConfigs: typeof telegramConfigs;
   test: typeof test;
   testQueries: typeof testQueries;
+  userSettings: typeof userSettings;
   users: typeof users;
 }>;
 export declare const api: FilterApi<

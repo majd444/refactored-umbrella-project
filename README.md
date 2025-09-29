@@ -86,3 +86,4 @@ Environment Variables:
 - Enable "Message Content Intent" in the Discord Developer Portal → Bot → Privileged Gateway Intents.
 
 # refactored-umbrella-project
+# refactored-umbrella-project
