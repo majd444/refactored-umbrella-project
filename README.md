@@ -85,3 +85,4 @@ Environment Variables:
 - Invite the bot after saving (we auto-open the Invite URL).
 - Enable "Message Content Intent" in the Discord Developer Portal → Bot → Privileged Gateway Intents.
 
+# refactored-umbrella-project
