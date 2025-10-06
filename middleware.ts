@@ -16,6 +16,8 @@ const isPublicRoute = (pathname: string) => {
     '/',
     '/sign-in(.*)',
     '/sign-up(.*)',
+    // Clerk Frontend API proxy must be public
+    '/clerk(.*)',
     // Telegram webhook must be public (Telegram cannot provide your app session)
     '/api/telegram(.*)',
     '/api/webhooks(.*)',
@@ -35,7 +37,7 @@ const hasClerkEnv =
 
 // If Clerk is not configured, bypass middleware to prevent 500s in production
 export default (!hasClerkEnv
-  ? (async (_req: Request) => {
+  ? (async (_: Request) => {
       return NextResponse.next();
     })
   : clerkMiddleware(async (auth, req) => {

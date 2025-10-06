@@ -26,6 +26,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
           footerActionLink: 'text-blue-600 hover:text-blue-700',
         },
       }}
+      afterSignInUrl="/dashboard"
+      afterSignUpUrl="https://www.pros.tools/pricing"
+      signInFallbackRedirectUrl="/dashboard"
+      signUpFallbackRedirectUrl="https://www.pros.tools/pricing"
     >
       <ConvexClientProvider>
         {children}

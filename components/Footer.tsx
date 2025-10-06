@@ -1,4 +1,6 @@
-import { Bot, Twitter, Github, Linkedin } from "lucide-react"
+import { Twitter, Github, Linkedin } from "lucide-react"
+import Image from "next/image"
+import Link from "next/link"
 
 const Footer = () => {
   return (
@@ -7,10 +9,15 @@ const Footer = () => {
         <div className="grid md:grid-cols-5 gap-8">
           <div className="col-span-2">
             <div className="flex items-center space-x-3 mb-4">
-              <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-2.5 rounded-xl shadow-lg">
-                <Bot className="h-6 w-6 text-white" />
-              </div>
-              <span className="text-2xl font-bold">proaichats</span>
+              <Link href="/" className="inline-flex items-center">
+                <Image
+                  src="/logo.png"
+                  alt="App logo"
+                  width={280}
+                  height={80}
+                  className="h-12 md:h-14 w-auto object-contain"
+                />
+              </Link>
             </div>
             <p className="text-gray-400 max-w-md leading-relaxed">
               Build, customize, and deploy AI agents for your business needs without writing a single line of code.
@@ -53,14 +60,18 @@ const Footer = () => {
             <ul className="space-y-3 text-gray-400">
               <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
               <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Privacy Policy</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Terms of Service</a></li>
+              <li>
+                <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
+              </li>
+              <li>
+                <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
+              </li>
             </ul>
           </div>
         </div>
         
         <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-          <p>&copy; {new Date().getFullYear()} proaichats. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} All rights reserved.</p>
         </div>
       </div>
     </footer>

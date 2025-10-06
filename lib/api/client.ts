@@ -1,6 +1,7 @@
-// Prefer env var in production; fall back to localhost in dev
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:8005';
+// Prefer env var in production; fall back to Convex HTTP URL in dev
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_CONVEX_HTTP_URL || ''
+).replace(/\/$/, '');
 
 // Types
 export interface Agent {
@@ -83,6 +84,7 @@ export const apiClient = {
    */
   async checkHealth(): Promise<boolean> {
     try {
+      if (!API_BASE_URL) return false;
       const response = await fetch(`${API_BASE_URL}/health`);
       return response.ok;
     } catch (error) {

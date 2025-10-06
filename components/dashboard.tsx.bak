@@ -40,7 +40,6 @@ export default function Dashboard() {
         <div>
           {isLoaded && userId ? (
             <div className="flex items-center space-x-2 bg-gray-100 px-3 py-2 rounded-md">
-              <span className="text-sm text-gray-600">User ID:</span>
               <span className="font-mono text-sm bg-white px-2 py-1 rounded border border-gray-200">
                 {userId.substring(0, 8)}...
               </span>

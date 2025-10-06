@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Slider } from "@/components/ui/slider"
 import SimpleChatForm from "@/components/simple-chat-form"
 import ChatInterface from "@/components/chat-interface"
+import DefaultChatbotConfig from "@/components/DefaultChatbotConfig"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
@@ -48,6 +49,7 @@ const pluginLogos = [
   { id: "messenger", name: "Meta", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/0/05/Facebook_Logo_%282019%29.png" },
   { id: "telegram", name: "Telegram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" },
   { id: "discord", name: "Discord", logoUrl: "https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png" },
+  { id: "default", name: "Default Chatbot", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/3/30/OOjs_UI_icon_message.svg" },
 ]
 
 const colorPalette = [
@@ -610,7 +612,6 @@ function CreateAgentModal({ onClose }: CreateAgentModalProps) {
                       }, 1000);
                       return; // Explicitly return void
                     }}
-                    onClose={onClose}
                     className="w-full h-full"
                   />
                 )}
@@ -1176,13 +1177,6 @@ const StyleTab: React.FC<StyleTabProps> = ({
       return
     }
 
-    console.log('Selected file:', {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      lastModified: file.lastModified
-    });
-
     // Reset the file input to allow re-uploading the same file
     if (e.target) {
       e.target.value = ''
@@ -1192,13 +1186,6 @@ const StyleTab: React.FC<StyleTabProps> = ({
     if (!file.type.startsWith('image/')) {
       console.error('Invalid file type:', file.type);
       alert('Please upload a valid image file (JPEG, PNG, etc.)')
-      return
-    }
-
-    // Validate file size (2MB max)
-    if (file.size > 2 * 1024 * 1024) {
-      console.error('File too large:', file.size);
-      alert('Image size should be less than 2MB')
       return
     }
 
@@ -1582,7 +1569,7 @@ interface PluginsTabProps {
 const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
   const router = useRouter();
   const [showEmbed, setShowEmbed] = React.useState(false)
-  const [snippet, setSnippet] = React.useState('<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
+  const [snippet, setSnippet] = React.useState('<script src="https://improved-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
   const [isEmbedLoading, setIsEmbedLoading] = React.useState(false)
   const [embedError, setEmbedError] = React.useState<string | null>(null)
 
@@ -1594,6 +1581,10 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
   const [discordError, setDiscordError] = React.useState<string | null>(null)
   const saveDiscordConfig = useMutation(api.discord.saveBotConfig)
   const [discordAgentId, setDiscordAgentId] = React.useState<string>("")
+
+  // Default Chatbot state
+  const [showDefault, setShowDefault] = React.useState(false)
+  const [defaultAgentId, setDefaultAgentId] = React.useState<string>("")
 
   React.useEffect(() => {
     (async () => {
@@ -1611,13 +1602,25 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       router.push('/integrations/wordpress');
       return;
     }
+    if (pluginId === "default") {
+      setEmbedError(null)
+      try {
+        const id = await getAgentId()
+        setDefaultAgentId(id)
+        setShowDefault(true)
+      } catch (err) {
+        console.error('Failed to get agent id for default chatbot', err)
+        setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
+      }
+      return;
+    }
     if (pluginId === "html-css") {
       setEmbedError(null)
       setShowEmbed(true)
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const embedOrigin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        const embedOrigin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-seven.vercel.app'
         setSnippet(`<script src="${embedOrigin}/widget.js" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
@@ -1657,7 +1660,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
           <Card 
             key={plugin.id}
             onClick={() => handleClick(plugin.id)}
-            className={(plugin.id === 'html-css' || plugin.id === 'wordpress' || plugin.id === 'shopify') ? 'cursor-pointer' : undefined}
+            className={(plugin.id === 'html-css' || plugin.id === 'wordpress' || plugin.id === 'shopify' || plugin.id === 'discord' || plugin.id === 'default') ? 'cursor-pointer' : undefined}
           >
             <CardContent className="p-3">
               <div className="flex items-center">
@@ -1696,6 +1699,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
                     {plugin.id === "messenger" && "Facebook Messenger integration via Meta"}
                     {plugin.id === "telegram" && "Telegram Bot API integration"}
                     {plugin.id === "discord" && "Discord bot integration"}
+                    {plugin.id === "default" && "Default embeddable chatbot (no keys)"}
                   </p>
                 </div>
               </div>
@@ -1861,6 +1865,24 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDefault} onOpenChange={(open) => { setShowDefault(open); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Default Chatbot</DialogTitle>
+            <DialogDescription>
+              Copy the embed snippet and paste it into your website. No keys required.
+            </DialogDescription>
+          </DialogHeader>
+          {defaultAgentId ? (
+            <DefaultChatbotConfig agentId={defaultAgentId} />
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-black">
+              <RefreshCw className="h-4 w-4 animate-spin" /> Preparing default chatbot...
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

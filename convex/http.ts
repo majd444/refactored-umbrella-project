@@ -39,6 +39,21 @@ const createWidgetSession = httpAction(async (ctx, req) => {
       metadata: { source: 'widget' },
     });
 
+    // Ensure profileImage is a signed URL if it's an unsigned storage path
+    let profileImage: string | undefined = (agent as { profileImage?: string }).profileImage;
+    try {
+      if (profileImage && typeof profileImage === 'string') {
+        const hasQuery = profileImage.includes('?');
+        const match = profileImage.match(/\/api\/storage\/([^?]+)$/);
+        if (!hasQuery && match && match[1]) {
+          const signed = await ctx.storage.getUrl(match[1] as unknown as Id<'_storage'>);
+          if (signed) profileImage = signed;
+        }
+      }
+    } catch (e) {
+      console.warn('[createWidgetSession] Failed to sign profileImage URL; falling back to stored value', e);
+    }
+
     const res: SessionResponse = {
       sessionId,
       agent: {
@@ -50,7 +65,7 @@ const createWidgetSession = httpAction(async (ctx, req) => {
         headerColor: (agent as { headerColor?: string }).headerColor,
         accentColor: (agent as { accentColor?: string }).accentColor,
         backgroundColor: (agent as { backgroundColor?: string }).backgroundColor,
-        profileImage: (agent as { profileImage?: string }).profileImage,
+        profileImage,
         // Pre-chat
         collectUserInfo: Boolean((agent as { collectUserInfo?: unknown }).collectUserInfo),
         formFields: Array.isArray((agent as { formFields?: unknown }).formFields)
@@ -379,7 +394,24 @@ const getAgentPublic = httpAction(async (ctx, req) => {
       });
     }
 
-    return new Response(JSON.stringify(agent), {
+    // Ensure profileImage is a signed URL if an unsigned storage path was stored
+    let profileImage: string | undefined = (agent as { profileImage?: string }).profileImage;
+    try {
+      if (profileImage && typeof profileImage === 'string') {
+        const hasQuery = profileImage.includes('?');
+        const match = profileImage.match(/\/api\/storage\/([^?]+)$/);
+        if (!hasQuery && match && match[1]) {
+          const signed = await ctx.storage.getUrl(match[1] as unknown as Id<'_storage'>);
+          if (signed) profileImage = signed;
+        }
+      }
+    } catch (e) {
+      console.warn('[getAgentPublic] Failed to sign profileImage URL; using stored value', e);
+    }
+
+    const agentPatched = { ...agent, profileImage } as typeof agent & { profileImage?: string };
+
+    return new Response(JSON.stringify(agentPatched), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',

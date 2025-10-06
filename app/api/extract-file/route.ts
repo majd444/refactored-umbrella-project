@@ -1,50 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promisify } from 'util';
-import { exec } from 'child_process';
-import { writeFile, unlink } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
-
-const execAsync = promisify(exec);
-
-// Helper function to extract text from PDF buffer
-async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  try {
-    // First try with pdf-parse
-    const pdfData = await import('pdf-parse');
-    const data = await pdfData.default(buffer, {
-      max: 10 * 1024 * 1024 // 10MB max
-    });
-    return data.text;
-  } catch (error) {
-    console.error('PDF parse error, trying fallback method:', error);
-    // Fallback to pdftotext if available
-    try {
-      const tempInput = join(tmpdir(), `temp-${Date.now()}.pdf`);
-      const tempOutput = join(tmpdir(), `temp-${Date.now()}.txt`);
-      
-      await writeFile(tempInput, buffer);
-      
-      try {
-        await execAsync(`pdftotext "${tempInput}" "${tempOutput}"`);
-        const fs = await import('fs');
-        const { promisify } = await import('util');
-        const readFile = promisify(fs.readFile);
-        const textContent = await readFile(tempOutput, 'utf-8');
-        return textContent;
-      } finally {
-        // Clean up temp files
-        await Promise.allSettled([
-          unlink(tempInput).catch(console.error),
-          unlink(tempOutput).catch(console.error)
-        ]);
-      }
-    } catch (fallbackError) {
-      console.error('Fallback PDF extraction failed:', fallbackError);
-      throw new Error('Failed to extract text from PDF');
-    }
-  }
-}
 
 // Helper function to set CORS headers
 const corsHeaders = {
@@ -52,6 +6,16 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+// Handle CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      ...corsHeaders,
+    },
+  });
+}
 
 export async function POST(req: NextRequest) {
   // Helper function to create a consistent error response
@@ -89,10 +53,14 @@ export async function POST(req: NextRequest) {
       return errorResponse('No file provided');
     }
 
-    // Check file type
-    const fileType = file.type;
+    // Determine file type (fallback to extension if missing)
+    const rawType = file.type;
+    const nameLower = (file.name || '').toLowerCase();
+    const ext = nameLower.split('.').pop() || '';
+    const isPdfByName = ext === 'pdf';
+    const fileType = rawType || (isPdfByName ? 'application/pdf' : '');
     if (!fileType) {
-      return errorResponse('Could not determine file type');
+      return errorResponse('Could not determine file type', 400, { name: file.name });
     }
 
     // Convert file to Buffer
@@ -110,17 +78,89 @@ export async function POST(req: NextRequest) {
 
     switch (fileType) {
       case 'application/pdf':
-        try {
-          textContent = await extractTextFromPdf(buffer);
-          // Try to get page count using a simple regex (not 100% reliable but better than nothing)
-          // Use form feed character (\f) to count pages
-          const pageCount = (textContent.match(/\f/g) || []).length + 1;
-          metadata = { pages: pageCount };
-        } catch (error) {
-          console.error('PDF extraction failed:', error);
-          return errorResponse('Text extraction failed', 500, 'No text content could be extracted from the file');
+        {
+          // 1) Try pdf2json (pure Node, no workers/binaries)
+          const tryPdf2Json = async (): Promise<{ text: string }> => {
+            try {
+              type PDF2JSONCtor = new () => PDF2JSONInstance;
+              interface PDF2JSONInstance {
+                on: (event: string, cb: (data: unknown) => void) => void;
+                parseBuffer: (buf: Buffer) => void;
+              }
+              type PDF2JSONModule = { default?: PDF2JSONCtor } | { PDFParser?: PDF2JSONCtor };
+
+              const mod = (await import('pdf2json')) as unknown as PDF2JSONModule;
+              const PDFParserCtor: PDF2JSONCtor | undefined =
+                ('default' in mod && mod.default ? mod.default : undefined) ??
+                ('PDFParser' in mod && mod.PDFParser ? mod.PDFParser : undefined);
+              if (!PDFParserCtor) throw new Error('pdf2json not available');
+
+              const parser: PDF2JSONInstance = new PDFParserCtor();
+              const text = await new Promise<string>((resolve, reject) => {
+                const collected: string[] = [];
+                parser.on('pdfParser_dataError', (err: unknown) => {
+                  reject(err instanceof Error ? err : new Error('PDF parse error'));
+                });
+                parser.on('pdfParser_dataReady', (pdfData: unknown) => {
+                  const data = pdfData as { Pages?: Array<{ Texts?: Array<{ R?: Array<{ T?: string }> }> }> };
+                  const pages = Array.isArray(data.Pages) ? data.Pages : [];
+                  for (const page of pages) {
+                    const texts = Array.isArray(page.Texts) ? page.Texts : [];
+                    const parts: string[] = [];
+                    for (const t of texts) {
+                      const runs = Array.isArray(t.R) ? t.R : [];
+                      for (const r of runs) {
+                        const enc = typeof r.T === 'string' ? r.T : '';
+                        try { parts.push(decodeURIComponent(enc)); } catch { parts.push(enc); }
+                      }
+                    }
+                    if (parts.length) collected.push(parts.join(' '));
+                  }
+                  resolve(collected.join('\n'));
+                });
+                parser.parseBuffer(buffer);
+              });
+              return { text };
+            } catch (e) {
+              throw e;
+            }
+          };
+
+          // 2) Try pdf-parse as a fallback (dynamic import to avoid build-time side-effects)
+          const tryPdfParse = async (): Promise<{ text: string; pages?: number }> => {
+            const mod = await import('pdf-parse');
+            const pdf = (mod as unknown as { default: (b: Buffer) => Promise<{ text?: string; numpages?: number }> }).default;
+            const data = await pdf(buffer);
+            return { text: (data.text || '').trim(), pages: (data as unknown as { numpages?: number }).numpages };
+          };
+
+          // Attempt extraction
+          try {
+            const r1 = await tryPdf2Json();
+            if (r1.text && r1.text.length > 0) {
+              textContent = r1.text.trim();
+              metadata = {};
+              break;
+            }
+          } catch (e) {
+            // swallow and try fallback
+          }
+          try {
+            const r2 = await tryPdfParse();
+            if (r2.text && r2.text.length > 0) {
+              textContent = r2.text;
+              metadata = { pages: r2.pages };
+              break;
+            }
+          } catch (err) {
+            console.error('PDF parse failed (fallback):', err);
+          }
+
+          // Final graceful fallback
+          textContent = '[PDF uploaded: text extraction failed]';
+          metadata = { note: 'No extractable text' };
+          break;
         }
-        break;
       case 'text/plain':
         try {
           textContent = buffer.toString('utf-8');
@@ -130,7 +170,70 @@ export async function POST(req: NextRequest) {
         }
         break;
       default:
-        return errorResponse('Unsupported file type', 400, { receivedType: fileType });
+        // Allow common opaque uploads but infer by name
+        if (fileType === 'application/octet-stream' && isPdfByName) {
+          // Reuse same strategy for octet-stream + .pdf
+          try {
+            const r1 = await (async () => {
+              try {
+                type PDF2JSONCtor = new () => PDF2JSONInstance;
+                interface PDF2JSONInstance {
+                  on: (event: string, cb: (data: unknown) => void) => void;
+                  parseBuffer: (buf: Buffer) => void;
+                }
+                type PDF2JSONModule = { default?: PDF2JSONCtor } | { PDFParser?: PDF2JSONCtor };
+                const mod = (await import('pdf2json')) as unknown as PDF2JSONModule;
+                const PDFParserCtor: PDF2JSONCtor | undefined =
+                  ('default' in mod && mod.default ? mod.default : undefined) ??
+                  ('PDFParser' in mod && mod.PDFParser ? mod.PDFParser : undefined);
+                if (!PDFParserCtor) throw new Error('pdf2json not available');
+                const parser: PDF2JSONInstance = new PDFParserCtor();
+                const text = await new Promise<string>((resolve, reject) => {
+                  const collected: string[] = [];
+                  parser.on('pdfParser_dataError', (err: unknown) => reject(err instanceof Error ? err : new Error('PDF parse error')));
+                  parser.on('pdfParser_dataReady', (pdfData: unknown) => {
+                    const data = pdfData as { Pages?: Array<{ Texts?: Array<{ R?: Array<{ T?: string }> }> }> };
+                    const pages = Array.isArray(data.Pages) ? data.Pages : [];
+                    for (const page of pages) {
+                      const texts = Array.isArray(page.Texts) ? page.Texts : [];
+                      const parts: string[] = [];
+                      for (const t of texts) {
+                        const runs = Array.isArray(t.R) ? t.R : [];
+                        for (const r of runs) {
+                          const enc = typeof r.T === 'string' ? r.T : '';
+                          try { parts.push(decodeURIComponent(enc)); } catch { parts.push(enc); }
+                        }
+                      }
+                      if (parts.length) collected.push(parts.join(' '));
+                    }
+                    resolve(collected.join('\n'));
+                  });
+                  parser.parseBuffer(buffer);
+                });
+                return { text };
+              } catch (e) { throw e; }
+            })();
+            if (r1.text && r1.text.length > 0) {
+              textContent = r1.text.trim();
+              metadata = {};
+              break;
+            }
+          } catch {}
+          try {
+            const mod = await import('pdf-parse');
+            const pdf = (mod as unknown as { default: (b: Buffer) => Promise<{ text?: string; numpages?: number }> }).default;
+            const data = await pdf(buffer);
+            textContent = (data.text || '').trim();
+            metadata = { pages: (data as unknown as { numpages?: number }).numpages };
+            break;
+          } catch (err) {
+            console.error('PDF extraction failed (octet-stream fallback):', err);
+            textContent = '[PDF uploaded: text extraction failed]';
+            metadata = { note: 'PDF extraction failed', error: (err as Error)?.message };
+            break;
+          }
+        }
+        return errorResponse('Unsupported file type', 400, { receivedType: fileType, name: file.name });
     }
 
     // Clean up text content if we have any
@@ -170,3 +273,9 @@ export const config = {
     bodyParser: false, // Disable body parsing, we'll handle it manually
   },
 };
+
+// Ensure Node.js runtime for compatibility with libraries and fs/child_process usage
+export const runtime = 'nodejs';
+// Prevent Next.js from attempting to prerender or collect static data for this route
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';

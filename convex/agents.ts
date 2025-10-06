@@ -51,6 +51,55 @@ export const list = query({
   },
 });
 
+// Generate an upload URL for Convex Storage (for images)
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+    const url = await ctx.storage.generateUploadUrl();
+    return url;
+  },
+});
+
+// After the client uploads the image to the upload URL, it gets a storageId back.
+// Persist that image to the agent by saving a permanent URL into profileImage.
+export const setProfileImage = mutation({
+  args: {
+    id: v.id("agents"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("Not authenticated");
+    }
+
+    const agent = await ctx.db.get(args.id);
+    if (!agent) {
+      throw new ConvexError("Agent not found");
+    }
+    if (agent.userId !== identity.subject) {
+      throw new ConvexError("Not authorized to update this agent");
+    }
+
+    // Get a durable URL for the uploaded file
+    const url = await ctx.storage.getUrl(args.storageId);
+    if (!url) {
+      throw new ConvexError("Failed to resolve uploaded image URL");
+    }
+
+    await ctx.db.patch(args.id, {
+      profileImage: url,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true as const, url };
+  },
+});
+
 export const get = query({
   args: { id: v.id("agents") },
   handler: async (ctx, args) => {
@@ -128,7 +177,7 @@ export const update = mutation({
       }
 
       // Prepare the update data with validation
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         name: args.name?.trim() || 'Untitled Agent',
         welcomeMessage: args.welcomeMessage?.trim() || "",
         systemPrompt: args.systemPrompt?.trim() || "You are a helpful AI assistant.",
@@ -137,8 +186,6 @@ export const update = mutation({
         headerColor: /^#[0-9A-F]{6}$/i.test(args.headerColor) ? args.headerColor : "#3B82F6",
         accentColor: /^#[0-9A-F]{6}$/i.test(args.accentColor) ? args.accentColor : "#00D4FF",
         backgroundColor: /^#[0-9A-F]{6}$/i.test(args.backgroundColor) ? args.backgroundColor : "#FFFFFF",
-        // Normalize null to undefined for optional field
-        profileImage: args.profileImage || undefined,
         collectUserInfo: Boolean(args.collectUserInfo),
         formFields: args.formFields.map((field, index) => ({
           id: field.id || `field-${index}-${Date.now()}`,
@@ -149,6 +196,12 @@ export const update = mutation({
         })),
         updatedAt: Date.now(),
       };
+
+      // Only update profileImage if explicitly provided in args
+      if (Object.prototype.hasOwnProperty.call(args as object, 'profileImage')) {
+        // Normalize null to undefined for optional field
+        updateData.profileImage = args.profileImage ?? undefined;
+      }
       
       console.log('Attempting to update agent with validated data:', JSON.stringify(updateData, null, 2));
 

@@ -4,7 +4,7 @@ import React, { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { X, RefreshCw, Upload, FileText, Globe, Trash2, Copy, Plus, Edit2, ChevronDown, Phone, User, Mail, ExternalLink } from "lucide-react"
-import { useMutation, useQuery } from "convex/react"
+import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
 import { useUser } from "@clerk/nextjs"
@@ -19,6 +19,8 @@ import SimpleChatForm from "@/components/simple-chat-form"
 import ChatInterface from "@/components/chat-interface"
 import { apiClient } from "@/lib/api/client"
 import TelegramConfig from "@/components/TelegramConfig"
+import DiscordConfig from "@/components/DiscordConfig"
+import DefaultChatbotConfig from "@/components/DefaultChatbotConfig"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
@@ -46,6 +48,7 @@ const pluginLogos = [
   { id: "html-css", name: "HTML", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg" },
   { id: "telegram", name: "Telegram", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" },
   { id: "discord", name: "Discord", logoUrl: "https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png" },
+  { id: "default", name: "Default Chatbot", logoUrl: "https://upload.wikimedia.org/wikipedia/commons/3/30/OOjs_UI_icon_message.svg" },
 ]
 
 const colorPalette = [
@@ -1707,51 +1710,44 @@ interface PluginsTabProps {
 const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
   const router = useRouter();
   const [showEmbed, setShowEmbed] = React.useState(false)
-  const [snippet, setSnippet] = React.useState('<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
+  const [snippet, setSnippet] = React.useState('<script src="https://improved-seven.vercel.app/widget.js" data-bot-id="USER_BOT_ID"></script>')
   const [isEmbedLoading, setIsEmbedLoading] = React.useState(false)
   const [embedError, setEmbedError] = React.useState<string | null>(null)
   const [embedTitle, setEmbedTitle] = React.useState('Embed Script')
   const [showDiscord, setShowDiscord] = React.useState(false)
   const [discordAgentId, setDiscordAgentId] = React.useState<string>('')
-  const [discordClientId, setDiscordClientId] = React.useState('')
-  const [discordToken, setDiscordToken] = React.useState('')
-  const [discordLoading, setDiscordLoading] = React.useState(false)
-  const [discordError, setDiscordError] = React.useState<string | null>(null)
-  const [discordSaved, setDiscordSaved] = React.useState(false)
-  const saveDiscordConfig = useMutation(api.discord.saveBotConfig)
   
   // Telegram state
   const [showTelegram, setShowTelegram] = React.useState(false)
   const [telegramAgentId, setTelegramAgentId] = React.useState<string>('')
 
-  // Load existing Discord config for this agent (when dialog is open and agent id is available)
-  // Only query when user is signed in to avoid Convex auth errors
-  const { isSignedIn } = useUser();
-  const myDiscordCfg = useQuery(
-    api.discord.getMyBotConfig,
-    (isSignedIn && showDiscord && discordAgentId)
-      ? { agentId: discordAgentId as Id<'agents'> }
-      : "skip"
-  )
+  // Default Chatbot state
+  const [showDefault, setShowDefault] = React.useState(false)
+  const [defaultAgentId, setDefaultAgentId] = React.useState<string>('')
 
-  React.useEffect(() => {
-    if (myDiscordCfg) {
-      if (typeof myDiscordCfg.clientId === 'string') setDiscordClientId(myDiscordCfg.clientId)
-      if (myDiscordCfg.hasToken) setDiscordSaved(true)
-    }
-  }, [myDiscordCfg])
+  // DiscordConfig handles its own fetching and saving; we only need the agentId and dialog state here.
 
   const handleClick = async (pluginId: string) => {
     if (pluginId === "wordpress") {
       router.push('/integrations/wordpress');
       return;
     }
+    if (pluginId === "default") {
+      try {
+        const id = await getAgentId()
+        setDefaultAgentId(id)
+        setShowDefault(true)
+      } catch (err) {
+        console.error('Failed to get agent id for default chatbot', err)
+        setEmbedError('Could not save agent. Please fix required fields or sign in, then try again.')
+      }
+      return;
+    }
     if (pluginId === "discord") {
       try {
         const id = await getAgentId()
         setDiscordAgentId(id)
-        setDiscordError(null)
-        setDiscordSaved(false)
+        // Ensure a clean dialog each time it opens
         setShowDiscord(true)
       } catch (err) {
         console.error('Failed to get agent id for Discord', err)
@@ -1776,7 +1772,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-seven.vercel.app'
         setSnippet(`<script src="${origin}/shopify-chat-widget.js?v=1" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
@@ -1793,7 +1789,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
       setIsEmbedLoading(true)
       try {
         const id = await getAgentId()
-        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-happiness-seven.vercel.app'
+        const origin = process.env.NEXT_PUBLIC_WIDGET_ORIGIN || 'https://improved-seven.vercel.app'
         setSnippet(`<script src="${origin}/widget.js" data-bot-id="${id}"></script>`)
       } catch (err) {
         console.error('Failed to get agent id for embed', err)
@@ -1822,7 +1818,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
           <Card 
             key={plugin.id}
             onClick={() => handleClick(plugin.id)}
-            className={(plugin.id === 'html-css' || plugin.id === 'wordpress' || plugin.id === 'shopify' || plugin.id === 'discord' || plugin.id === 'telegram') ? 'cursor-pointer' : undefined}
+            className={(plugin.id === 'html-css' || plugin.id === 'wordpress' || plugin.id === 'shopify' || plugin.id === 'discord' || plugin.id === 'telegram' || plugin.id === 'default') ? 'cursor-pointer' : undefined}
           >
             <CardContent className="p-3">
               <div className="flex items-center">
@@ -1856,6 +1852,7 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
                     {plugin.id === "messenger" && "Facebook Messenger integration via Meta"}
                     {plugin.id === "telegram" && "Telegram Bot API integration"}
                     {plugin.id === "discord" && "Discord bot integration"}
+                    {plugin.id === "default" && "Default embeddable chatbot (no keys)"}
                   </p>
                 </div>
               </div>
@@ -1889,98 +1886,39 @@ const PluginsTab: React.FC<PluginsTabProps> = ({ plugins, getAgentId }) => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showDiscord} onOpenChange={(open) => { setShowDiscord(open); if (!open) { setDiscordError(null); setDiscordSaved(false); setDiscordClientId(''); setDiscordToken(''); } }}>
-        <DialogContent>
+      <Dialog open={showDiscord} onOpenChange={(open) => { setShowDiscord(open); }}>
+        <DialogContent className="max-w-2xl w-[90vw]">
           <DialogHeader>
             <DialogTitle>Connect Discord Bot</DialogTitle>
             <DialogDescription>
-              Enter your Discord Application Client ID and Bot Token. We&apos;ll associate them with this agent.
+              Use the same Discord configuration UI as in Agent Settings.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <a
-                href="https://discord.com/developers/applications"
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-600 hover:underline"
-              >
-                Open Discord Developer Portal
-              </a>
-              {discordClientId?.trim() && (
-                <a
-                  href={`https://discord.com/developers/applications/${encodeURIComponent(discordClientId)}/bot`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  Open Bot Settings for this Client ID
-                </a>
-              )}
+          {discordAgentId ? (
+            <DiscordConfig agentId={discordAgentId as unknown as Id<'agents'>} />
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-black">
+              <RefreshCw className="h-4 w-4 animate-spin" /> Preparing Discord configuration...
             </div>
-            {discordLoading ? (
-              <div className="flex items-center gap-2 text-sm text-black"><RefreshCw className="h-4 w-4 animate-spin" /> Preparing Discord configuration...</div>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-xs font-medium text-black mb-1">Agent ID</label>
-                  <Input value={discordAgentId} readOnly className="text-black" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-black mb-1">Discord Client ID</label>
-                  <Input value={discordClientId} onChange={(e) => setDiscordClientId(e.target.value)} placeholder="123456789012345678" className="text-black" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-black mb-1">Bot Token</label>
-                  <Input type="password" value={discordToken} onChange={(e) => setDiscordToken(e.target.value)} placeholder="Bot token" className="text-black" />
-                </div>
-                {discordError && (
-                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{discordError}</div>
-                )}
-                {discordSaved && (
-                  <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">Saved. Your Discord bot is linked to this agent.</div>
-                )}
-                
-                <div className="flex gap-2 justify-end">
-                  <Button
-                    onClick={async () => {
-                      setDiscordError(null)
-                      setDiscordSaved(false)
-                      if (!discordClientId.trim() || !discordToken.trim()) {
-                        setDiscordError('Please enter both Client ID and Bot Token.')
-                        return
-                      }
-                      try {
-                        setDiscordLoading(true)
-                        // Persist to backend
-                        await saveDiscordConfig({
-                          agentId: discordAgentId as unknown as Id<'agents'>,
-                          clientId: discordClientId.trim(),
-                          token: discordToken.trim(),
-                        })
-                        setDiscordSaved(true)
-                        // Skipping Railway provisioning per project preference. Bot can be run via HTTPS interactions or external runner.
-                        // Build invite URL for convenience
-                        const clientId = encodeURIComponent(discordClientId.trim())
-                        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot%20applications.commands&permissions=3072`
-                        if (typeof window !== 'undefined') {
-                          window.open(inviteUrl, '_blank')
-                        }
-                      } catch (e) {
-                        console.error('Failed to save Discord config', e)
-                        setDiscordError(e instanceof Error ? e.message : 'Failed to save Discord configuration.')
-                      } finally {
-                        setDiscordLoading(false)
-                      }
-                    }}
-                  >
-                    Save
-                  </Button>
-                  <Button variant="secondary" onClick={() => setShowDiscord(false)}>Close</Button>
-                </div>
-              </>
-            )}
-          </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDefault} onOpenChange={(open) => { setShowDefault(open); }}>
+        <DialogContent className="max-w-2xl w-[90vw]">
+          <DialogHeader>
+            <DialogTitle>Default Chatbot</DialogTitle>
+            <DialogDescription>
+              Copy the embed snippet and paste it into your website. No keys required.
+            </DialogDescription>
+          </DialogHeader>
+          {defaultAgentId ? (
+            <DefaultChatbotConfig agentId={defaultAgentId} />
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-black">
+              <RefreshCw className="h-4 w-4 animate-spin" /> Preparing default chatbot...
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

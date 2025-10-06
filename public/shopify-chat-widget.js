@@ -26,7 +26,7 @@
     pre.rel = 'preconnect';
     pre.href = baseOrigin;
     pre.crossOrigin = '';
-    document.head && document.head.appendChild(pre);
+    if (document.head) document.head.appendChild(pre);
   } catch {}
 
   // Create container
@@ -73,12 +73,23 @@
   iframe.title = 'Chatbot';
   iframe.allow = 'clipboard-write;';
   iframe.referrerPolicy = 'no-referrer-when-downgrade';
-  // Let capable browsers lazy-load the iframe when it becomes visible
   try { iframe.loading = 'lazy'; } catch {}
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = '0';
-  iframe.src = baseOrigin + '/widget?botId=' + encodeURIComponent(botId);
+  // Collect optional UI overrides from script tag attributes
+  function addIfPresent(params, key, attrName) {
+    var val = currentScript.getAttribute(attrName);
+    if (val && String(val).trim().length > 0) params.push(key + '=' + encodeURIComponent(val));
+  }
+  var params = ['botId=' + encodeURIComponent(botId)];
+  addIfPresent(params, 'name', 'data-name');
+  addIfPresent(params, 'headerColor', 'data-header-color');
+  addIfPresent(params, 'accentColor', 'data-accent-color');
+  addIfPresent(params, 'backgroundColor', 'data-background-color');
+  addIfPresent(params, 'profileImage', 'data-profile-image');
+  addIfPresent(params, 'welcomeMessage', 'data-welcome-message');
+  iframe.src = baseOrigin + '/widget?' + params.join('&');
 
   var isOpen = false;
   function open(){
@@ -106,13 +117,11 @@
     }
   });
 
-  // Listen for close events from iframe
   window.addEventListener('message', function(ev){
     if (!ev || !ev.data) return;
     if (ev.data === 'widget:close') close();
   });
 
-  // Insert toggle button (support late injection after DOMContentLoaded)
   function insertToggle(){
     if (!document.body.contains(toggleBtn)) {
       document.body.appendChild(toggleBtn);

@@ -1,11 +1,11 @@
 "use client"
 
-import { Plus, Copy, MessageSquare, Settings, Clock } from "lucide-react"
+import { Plus, MessageSquare, Settings, Clock } from "lucide-react"
 import { useAuth } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import Link from "next/link"
-import { toast } from "sonner"
+import Image from "next/image"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { format } from "date-fns"
@@ -14,10 +14,7 @@ import type { Doc } from "@/convex/_generated/dataModel"
 export default function Dashboard() {
   const { userId, isLoaded } = useAuth()
   
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    toast.success('User ID copied to clipboard')
-  }
+  // Removed unused copyToClipboard helper
 
   // Fetch agents for the current user (only after Clerk is ready & signed in)
   const shouldQuery = isLoaded && !!userId
@@ -45,33 +42,20 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-black">Dashboard</h1>
-        <div>
-          {userId ? (
-            <div className="flex items-center space-x-2 bg-gray-100 px-3 py-2 rounded-md">
-              <span className="text-sm text-gray-600">User ID:</span>
-              <span className="font-mono text-sm bg-white px-2 py-1 rounded border border-gray-200">
-                {userId.substring(0, 8)}...
-              </span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
-                onClick={() => copyToClipboard(userId)}
-              >
-                <Copy className="h-3.5 w-3.5" />
-                <span className="sr-only">Copy user ID</span>
-              </Button>
-            </div>
-          ) : (
-            <div className="text-sm text-gray-500">Not signed in</div>
-          )}
-        </div>
+    <div className="p-4 md:p-6">
+      <div className="flex justify-between items-center mb-4 md:mb-6">
+        <Link href="/dashboard" className="flex items-center">
+          <Image
+            src="/logo.png"
+            alt="Logo"
+            width={200}
+            height={50}
+            className="h-0 md:h-0 w-auto object-contain"
+            priority
+          />
+        </Link>
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-4 md:mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-md font-medium text-black">Current plan: {planLabel}</CardTitle>

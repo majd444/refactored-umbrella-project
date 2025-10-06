@@ -24,6 +24,18 @@ CLERK_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 
 # Optional: Node Environment
 NODE_ENV=development
+
+# Default Discord Bot (Optional)
+# If set, the app will seed a default Discord bot configuration server-side
+# for an agent when none exists. The token is stored only in Convex and is
+# never exposed to the client.
+DISCORD_DEFAULT_CLIENT_ID=1234567890123456789
+DISCORD_DEFAULT_BOT_TOKEN=your_bot_token_here
+
+# (Optional) Public Client ID prefill in UI
+# This is safe to expose to the client and is used to prefill the Client ID field
+# and generate the invite link before saving.
+NEXT_PUBLIC_DISCORD_DEFAULT_CLIENT_ID=1234567890123456789
 ```
 
 ## How to Get These Values
@@ -44,6 +56,9 @@ Go to your [Clerk Dashboard](https://dashboard.clerk.com):
 1. **JWT Issuer**: This must match exactly what's in your Clerk JWT template
 2. **Webhook**: You need to create a webhook in Clerk pointing to `/api/webhooks/clerk`
 3. **JWT Template**: You need a "convex" JWT template in Clerk with audience set to "convex"
+4. **Discord Defaults**: If you use `DISCORD_DEFAULT_*` variables, the UI will attempt to seed
+   a default bot configuration on first load of the Discord config panel when no token is present.
+   Users can then click "Invite Bot" to add it to their server.
 
 ## Troubleshooting
 

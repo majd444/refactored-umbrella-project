@@ -1,6 +1,5 @@
 "use client"
 
-import { Sidebar } from "@/components/sidebar"
 import { useAuth } from "@clerk/nextjs"
 import { useRouter } from "next/navigation"
 import { useEffect } from "react"
@@ -30,7 +29,6 @@ export default function SettingsLayout({
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar />
       <main className="flex-1 overflow-auto">
         {children}
       </main>

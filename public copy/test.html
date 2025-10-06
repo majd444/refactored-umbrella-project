@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat Widget Preview</title>
+    <style>
+      html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+      .page { min-height: 100%; display: flex; align-items: center; justify-content: center; background: #f8fafc; }
+      .card { background: white; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); padding: 24px; max-width: 720px; width: 92%; }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      p { margin: 8px 0; color: #334155; }
+      code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }
+      .hint { font-size: 13px; color: #64748b; margin-top: 8px; }
+      .open { margin-top: 12px; padding: 10px 14px; background: #0ea5e9; color: white; border: 0; border-radius: 10px; cursor: pointer; font-weight: 600; }
+    </style>
+
+    <!-- Mock the Convex /getAgent response so the widget can render locally -->
+    <script>
+      const MOCK_AGENT = {
+        accentColor: "#2563eb",
+        backgroundColor: "#ffffff",
+        collectUserInfo: true,
+        createdAt: Date.now(),
+        formFields: [
+          { id: "name", label: "Name", required: true, type: "text" },
+          { id: "email", label: "Email", required: true, type: "email" },
+          { id: "phone", label: "Phone", required: false, type: "tel" }
+        ],
+        headerColor: "#111827",
+        name: "Demo Bot",
+        profileImage: "",
+        systemPrompt: "You are a helpful assistant.",
+        temperature: 0.5,
+        updatedAt: Date.now(),
+        userId: "USER1234",
+        welcomeMessage: "👋 Hi! I'm your demo assistant."
+      };
+
+      (function mockConvexFetch(){
+        const originalFetch = window.fetch ? window.fetch.bind(window) : null;
+        window.fetch = (input, init) => {
+          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          if (url.includes('/getAgent')) {
+            return Promise.resolve(new Response(JSON.stringify(MOCK_AGENT), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }));
+          }
+          return originalFetch ? originalFetch(input, init) : Promise.reject(new Error('Fetch not available'));
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="page">
+      <div class="card">
+        <h1>Chat Widget Preview</h1>
+        <p>This page mocks the Convex <code>/getAgent</code> endpoint so you can preview the widget locally.</p>
+        <p>Click the blue chat bubble in the bottom-right to open the widget. Because <code>collectUserInfo</code> is true, you'll see a pre-chat form first.</p>
+        <p class="hint">Tip: Submitted user info is stored in <code>localStorage</code> under <code>chatWidget:user:USER1234</code>.</p>
+        <button class="open" onclick="document.querySelector('#chat-widget-toggle')?.click()">Open Chat</button>
+      </div>
+    </div>
+
+    <!-- Load the widget from the same origin; data-convex-url can be any string since we mock fetch('/getAgent') -->
+    <script
+      src="/widget.js"
+      data-bot-id="USER1234"
+      data-convex-url="http://localhost:5173"
+      data-backend-url="https://your-backend.com/api/chat"
+    ></script>
+  </body>
+</html>

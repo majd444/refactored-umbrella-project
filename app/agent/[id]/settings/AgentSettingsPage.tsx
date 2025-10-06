@@ -29,6 +29,7 @@ import ChatInterface from "@/components/chat-interface"
 import TelegramConfig from "@/components/TelegramConfig"
 import MetaConfig from "@/components/MetaConfig"
 import DiscordConfig from "@/components/DiscordConfig"
+import DefaultChatbotConfig from "@/components/DefaultChatbotConfig"
 import { apiClient } from "@/lib/api/client"
 
 // Types
@@ -115,6 +116,9 @@ export default function AgentSettingsPage() {
     '#84CC16', '#F59E0B', '#F97316', '#FFFFFF'
   ];
 
+  // Public default Discord Client ID (if configured)
+  const defaultDiscordClientId = process.env.NEXT_PUBLIC_DISCORD_DEFAULT_CLIENT_ID || "";
+
   // Local type for knowledge entries
   type KnowledgeEntry = {
     _id: Id<"fineTuningOutputs">;
@@ -128,6 +132,8 @@ export default function AgentSettingsPage() {
   const updateAgent = useMutation(api.agents.update);
   const saveFineTuning = useMutation(api.fineTuning.saveFineTuningOutput);
   const removeAgent = useMutation(api.agents.remove);
+  const generateUploadUrl = useMutation(api.agents.generateUploadUrl);
+  const setProfileImageMutation = useMutation(api.agents.setProfileImage);
   const agent = useQuery(
     api.agents.get,
     (isUserLoaded && !!user) ? { id: params.id as Id<"agents"> } : "skip"
@@ -623,57 +629,44 @@ export default function AgentSettingsPage() {
     }
   }, [extractionUrl, params.id, saveFineTuning, toast, isUserLoaded, user]);
 
-  // Avatar upload specifically for the Agent avatar in the Style tab
+  // Avatar upload specifically for the Agent avatar in the Style tab, using Convex Storage
   const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
     const file = e.target.files[0];
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const dataUrl = reader.result as string;
-        try {
-          // Build a full update payload (update mutation requires all fields)
-          const validatedFormFields = (Array.isArray(formState.formFields) ? formState.formFields : [])
-            .filter(field => field && typeof field === 'object' && field.id)
-            .map(field => ({
-              id: String(field.id || `field-${Date.now()}`),
-              type: String(field.type || 'text'),
-              label: String(field.label || 'Untitled Field'),
-              required: Boolean(field.required),
-              value: field.value ? String(field.value) : ''
-            }));
+      if (!file.type.startsWith('image/')) {
+        toast({ title: 'Invalid file', description: 'Please upload an image file.', className: 'bg-red-500 text-white' });
+        return;
+      }
 
-          await updateAgent({
-            id: params.id as Id<"agents">,
-            name: String(formState.name || 'AI Assistant').trim(),
-            welcomeMessage: String(formState.welcomeMessage || '').trim(),
-            systemPrompt: String(formState.systemPrompt || 'You are a helpful AI assistant.').trim(),
-            temperature: typeof formState.temperature === 'number' ? Math.max(0, Math.min(1, formState.temperature)) : 0.7,
-            headerColor: /^#[0-9A-Fa-f]{6}$/.test(formState.headerColor) ? formState.headerColor : '#3B82F6',
-            accentColor: /^#[0-9A-Fa-f]{6}$/.test(formState.accentColor) ? formState.accentColor : '#00D4FF',
-            backgroundColor: /^#[0-9A-Fa-f]{6}$/.test(formState.backgroundColor) ? formState.backgroundColor : '#FFFFFF',
-            profileImage: dataUrl,
-            collectUserInfo: Boolean(formState.collectUserInfo),
-            formFields: validatedFormFields.length > 0 ? validatedFormFields : [{
-              id: `field-${Date.now()}`,
-              type: 'text',
-              label: 'Name',
-              required: true,
-              value: ''
-            }]
-          });
+      // 1) Ask Convex for an upload URL
+      const uploadUrl = await generateUploadUrl();
+      // 2) Upload the file directly from the browser
+      const putRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!putRes.ok) {
+        const txt = await putRes.text().catch(() => '');
+        throw new Error(`Upload failed: ${putRes.status} ${putRes.statusText} ${txt}`);
+      }
+      const { storageId } = await putRes.json();
 
-          toast({ title: 'Avatar updated', description: 'Your agent avatar was saved.', className: 'bg-green-500 text-white' });
-        } catch (err) {
-          console.error('[AgentSettings] Failed to save avatar:', err);
-          toast({ title: 'Error', description: 'Failed to save avatar', className: 'bg-red-500 text-white' });
-        }
-      };
-      reader.readAsDataURL(file);
+      // 3) Tell Convex which agent this image belongs to
+      await setProfileImageMutation({
+        id: params.id as Id<'agents'>,
+        storageId,
+      });
+
+      toast({ title: 'Avatar updated', description: 'Your agent avatar was saved.', className: 'bg-green-500 text-white' });
+    } catch (err) {
+      console.error('[AgentSettings] Failed to save avatar:', err);
+      toast({ title: 'Error', description: 'Failed to save avatar', className: 'bg-red-500 text-white' });
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [formState, params.id, updateAgent, toast]);
+  }, [generateUploadUrl, setProfileImageMutation, params.id, toast]);
 
   // Remove a link from extracted content list (used in Fine-tuning UI)
   const removeLink = useCallback((index: number) => {
@@ -1393,6 +1386,7 @@ export default function AgentSettingsPage() {
                       { id: 'html-css', name: 'HTML', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/6/61/HTML5_logo_and_wordmark.svg' },
                       { id: 'telegram', name: 'Telegram', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg' },
                       { id: 'discord', name: 'Discord', logoUrl: 'https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png' },
+                      { id: 'default', name: 'Default Chatbot', logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/3/30/OOjs_UI_icon_message.svg' },
                     ].map((plugin) => (
                       <div
                         key={plugin.id}
@@ -1543,14 +1537,14 @@ export default function AgentSettingsPage() {
                 <h4 className="font-medium mb-2">Add to your Shopify theme</h4>
                 <p className="text-sm text-gray-600 mb-2">Paste this snippet into your Shopify theme (for example: Online Store → Themes → Edit code → theme.liquid before <code>&lt;/body&gt;</code>, or use a Custom Liquid section).</p>
                 <pre className="bg-gray-100 p-4 rounded-md overflow-auto text-sm whitespace-pre-wrap break-words">
-{`<script src="https://improved-happiness-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`}
+{`<script src="https://improved-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`}
                 </pre>
                 <div className="flex justify-end mt-2">
                   <Button
                     variant="secondary"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(`<script src="https://improved-happiness-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`)
+                        await navigator.clipboard.writeText(`<script src="https://improved-seven.vercel.app/shopify-chat-widget.js?v=1" data-bot-id="${params.id}"></script>`)
                         toast({ title: 'Copied', description: 'Shopify snippet copied to clipboard.' })
                       } catch (e) {
                         console.error('Copy failed', e)
@@ -1566,8 +1560,16 @@ export default function AgentSettingsPage() {
           )}
           {currentPlugin?.id === 'discord' && (
             <div className="space-y-4">
-              <div className="text-sm text-gray-600">
-                Paste your Discord Client ID and Bot Token, save, then click the Invite link to add the bot to your server.
+              <div className="text-sm text-gray-600 space-y-2">
+                <p>
+                  Paste your Discord Client ID and Bot Token, save, then click the Invite link to add the bot to your server.
+                </p>
+                {defaultDiscordClientId && (
+                  <p className="text-xs text-gray-500">
+                    Default bot available for quick setup. Click <strong>Use default bot</strong> in the panel below to preconfigure using Client ID
+                    <span className="font-mono"> {defaultDiscordClientId} </span> and your server-side token.
+                  </p>
+                )}
               </div>
               <DiscordConfig agentId={params.id as Id<"agents">} />
               <div className="flex justify-end">
@@ -1608,14 +1610,14 @@ export default function AgentSettingsPage() {
                 <h4 className="font-medium mb-2">Embed the widget</h4>
                 <p className="text-sm text-gray-600 mb-2">Copy and paste this script tag into your site (typically before <code>&lt;/body&gt;</code>):</p>
                 <pre className="bg-gray-100 p-4 rounded-md overflow-auto text-sm whitespace-pre-wrap break-words">
-{`<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`}
+{`<script src="https://improved-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`}
                 </pre>
                 <div className="flex justify-end mt-2">
                   <Button
                     variant="secondary"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(`<script src="https://improved-happiness-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`)
+                        await navigator.clipboard.writeText(`<script src="https://improved-seven.vercel.app/widget.js" data-bot-id="${params.id}"></script>`)
                         toast({ title: 'Copied', description: 'HTML/CSS embed snippet copied to clipboard.' })
                       } catch (e) {
                         console.error('Copy failed', e)
@@ -1626,6 +1628,17 @@ export default function AgentSettingsPage() {
                     Copy Snippet
                   </Button>
                 </div>
+              </div>
+            </div>
+          )}
+          {currentPlugin?.id === 'default' && (
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                Copy the embed snippet below and paste it into your website. No keys required.
+              </div>
+              <DefaultChatbotConfig agentId={params.id as string} />
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={() => setShowPluginModal(false)}>Close</Button>
               </div>
             </div>
           )}

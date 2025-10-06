@@ -75,7 +75,8 @@ function htmlToReadableText(html: string): string {
 
   // Headings, paragraphs, list items, table cells
   $('h1, h2, h3, h4, h5, h6, p, li, td, th').each((_i, el) => {
-    const tag = el.tagName?.toLowerCase() || '';
+    // Cheerio elements are a union; safely read the tag via prop('tagName')
+    const tag = (($(el).prop('tagName') as string | undefined) || '').toLowerCase();
     const text = $(el).text();
     // Emphasize headings with spacing
     if (/^h[1-6]$/.test(tag)) {

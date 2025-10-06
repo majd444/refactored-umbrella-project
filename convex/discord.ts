@@ -49,6 +49,68 @@ export const saveBotConfig = mutation({
   },
 })
 
+// Seed a default Discord bot configuration for an agent using server env vars.
+// Does nothing if:
+// - The env vars are not set, or
+// - The agent already has a token saved.
+export const seedDefaultBotConfig = mutation({
+  args: {
+    agentId: v.id("agents"),
+  },
+  handler: async (ctx, { agentId }) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) throw new ConvexError("Not authenticated")
+
+    const agent = await ctx.db.get(agentId)
+    if (!agent) throw new ConvexError("Agent not found")
+    if (agent.userId !== identity.subject) throw new ConvexError("Not authorized")
+
+    const DEFAULT_CLIENT_ID = process.env.DISCORD_DEFAULT_CLIENT_ID
+    const DEFAULT_BOT_TOKEN = process.env.DISCORD_DEFAULT_BOT_TOKEN
+
+    if (!DEFAULT_CLIENT_ID || !DEFAULT_BOT_TOKEN) {
+      // Nothing to seed
+      return { seeded: false as const, reason: "Missing server defaults" }
+    }
+
+    const existing = await ctx.db
+      .query("discordConfigs")
+      .withIndex("by_agent", q => q.eq("agentId", agentId))
+      .first()
+
+    const now = Date.now()
+
+    if (!existing) {
+      await ctx.db.insert("discordConfigs", {
+        agentId,
+        clientId: DEFAULT_CLIENT_ID,
+        token: DEFAULT_BOT_TOKEN,
+        botToken: DEFAULT_BOT_TOKEN,
+        createdAt: now,
+        updatedAt: now,
+      })
+      return { seeded: true as const, created: true as const }
+    }
+
+    const hasToken = ("token" in existing && typeof existing.token === "string" && existing.token.length > 0)
+    const hasBotToken = ("botToken" in existing && typeof existing.botToken === "string" && existing.botToken.length > 0)
+    const hasAnyToken = hasToken || hasBotToken
+
+    if (hasAnyToken) {
+      return { seeded: false as const, reason: "Token already present" }
+    }
+
+    await ctx.db.patch(existing._id, {
+      clientId: ("clientId" in existing && existing.clientId) ? existing.clientId : DEFAULT_CLIENT_ID,
+      token: DEFAULT_BOT_TOKEN,
+      botToken: DEFAULT_BOT_TOKEN,
+      updatedAt: now,
+    })
+
+    return { seeded: true as const, updated: true as const }
+  },
+})
+
 // Secured maintenance: backfill botToken from token for existing rows.
 export const backfillDiscordBotTokens = mutation({
   args: { key: v.string() },

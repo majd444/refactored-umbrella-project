@@ -22,7 +22,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }}
       signInFallbackRedirectUrl="/dashboard"
-      signUpFallbackRedirectUrl="/onboarding"
+      signUpFallbackRedirectUrl="https://www.pros.tools/pricing"
       afterSignOutUrl="/"
     >
       {children}

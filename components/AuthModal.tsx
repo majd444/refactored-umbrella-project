@@ -78,7 +78,7 @@ const AuthModal = ({ type, onClose, onSwitchType }: AuthModalProps) => {
           if (setActive) {
             await setActive({ session: result.createdSessionId })
           }
-          router.push("/onboarding")
+          router.push("/dashboard")
           onClose()
         } else {
           console.error('Sign up failed:', result)
@@ -119,8 +119,8 @@ const AuthModal = ({ type, onClose, onSwitchType }: AuthModalProps) => {
         
         await signUp.authenticateWithRedirect({
           strategy: `oauth_${oauthProvider}` as const,
-          redirectUrl: '/onboarding',
-          redirectUrlComplete: '/onboarding',
+          redirectUrl: 'https://www.pros.tools/pricing',
+          redirectUrlComplete: 'https://www.pros.tools/pricing',
         })
       }
     } catch (err) {

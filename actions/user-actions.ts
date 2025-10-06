@@ -22,8 +22,9 @@ export async function syncUser() {
       return { success: false, error: 'User not authenticated' }
     }
     
-    // Get user data from Clerk using server SDK (no env key required here)
-    const user = await clerkClient.users.getUser(userId)
+    // Get user data from Clerk using server SDK (v6: clerkClient is async factory)
+    const client = await clerkClient()
+    const user = await client.users.getUser(userId)
     
     if (!user) {
       return { success: false, error: 'User not found' }

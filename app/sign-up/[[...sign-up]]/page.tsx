@@ -10,8 +10,8 @@ export default function Page() {
             footerActionLink: 'text-blue-600 hover:text-blue-700',
           },
         }}
-        fallbackRedirectUrl="/pricing"
-        forceRedirectUrl="/pricing"
+        fallbackRedirectUrl="https://www.pros.tools/pricing"
+        forceRedirectUrl="https://www.pros.tools/pricing"
       />
     </div>
   )

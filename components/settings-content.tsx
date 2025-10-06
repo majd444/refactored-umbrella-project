@@ -181,10 +181,9 @@ function GeneralSettings({
     return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`
   })()
 
-  const timeMatches = useQuery(
-    api.userSettings.getTimezonesByLocalTime,
-    normalizedTime ? { time: normalizedTime } : "skip"
-  ) as { timeZone: string; offsetLabel: string }[] | undefined
+  // Feature temporarily disabled: backend query getTimezonesByLocalTime not available.
+  // Keep UI operational by stubbing no matches.
+  const timeMatches = undefined as unknown as { timeZone: string; offsetLabel: string }[] | undefined
 
   return (
     <div className="space-y-6">
@@ -304,7 +303,7 @@ function BillingSettings() {
   const [plan, setPlan] = useState("pro")
   const [isStartingCheckout, setIsStartingCheckout] = useState<string | null>(null)
   const [isOpeningPortal, setIsOpeningPortal] = useState(false)
-  const [invoices, setInvoices] = useState<Array<{
+  const [invoices] = useState<Array<{
     id: string
     date: string | null
     description: string
@@ -314,7 +313,7 @@ function BillingSettings() {
     hosted_invoice_url: string | null
     invoice_pdf: string | null
   }> | null>(null)
-  const [isLoadingInvoices, setIsLoadingInvoices] = useState(false)
+  const [isLoadingInvoices] = useState(false)
 
   const PRICE_IDS: Record<string, string | undefined> = {
     starter: process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER,
@@ -331,8 +330,9 @@ function BillingSettings() {
   // Map UI tiers to Convex plans used in backend/webhook logic
   const PLAN_BY_TIER: Record<"starter" | "pro" | "enterprise", "basic" | "pro"> = {
     starter: "basic",
-    pro: "pro",
-    // Treat enterprise as pro for now (adjust if you add more plans later)
+    // UI labels show 'pro' as $10 -> map to our 'basic' backend plan (10 USD)
+    pro: "basic",
+    // 'enterprise' is $20 -> map to 'pro' backend plan (20 USD)
     enterprise: "pro",
   }
 

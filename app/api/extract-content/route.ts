@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-// Import pdf-parse with default import since we want to use it as a function
-import pdf from 'pdf-parse';
-import * as mammoth from 'mammoth';
 
 // Helper function to set CORS headers
 const corsHeaders = {
@@ -57,6 +54,9 @@ export async function POST(req: NextRequest) {
 
     switch (fileType) {
       case 'pdf':
+        // Dynamically import to avoid bundling test fixtures during build
+        const pdfModule = await import('pdf-parse');
+        const pdf = pdfModule.default;
         const pdfData = await pdf(Buffer.from(arrayBuffer));
         textContent = pdfData.text;
         metadata = {
@@ -67,6 +67,8 @@ export async function POST(req: NextRequest) {
 
       case 'docx':
       case 'doc':
+        // Dynamically import to avoid bundling extra assets during build
+        const mammoth = await import('mammoth');
         const docxResult = await mammoth.extractRawText({ buffer: Buffer.from(arrayBuffer) });
         textContent = docxResult.value;
         break;

@@ -49,56 +49,7 @@ const Hero = ({ onOpenAuth }: HeroProps) => {
           </Button>
         </div>
         
-        <div className="relative max-w-6xl mx-auto">
-          <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-2xl border border-white/50 p-6 md:p-8">
-            <div className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-2xl p-6 md:p-8 border border-blue-100">
-              {/* AI Assistant Demo */}
-              <div className="bg-white rounded-xl shadow-lg p-6 max-w-md mx-auto">
-                <div className="flex items-center gap-3 mb-4 pb-3 border-b border-gray-100">
-                  <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
-                    <Bot className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-gray-900">AI Assistant</h4>
-                    <p className="text-sm text-green-500 flex items-center gap-1">
-                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Online now
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="bg-blue-50 rounded-lg p-3 flex-1">
-                      <p className="text-sm text-gray-800">Hello! I&apos;m your AI assistant. How can I help you today?</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex gap-3 justify-end">
-                    <div className="bg-gray-100 rounded-lg p-3 max-w-xs">
-                      <p className="text-sm text-gray-800">Can you help me find information about your product pricing?</p>
-                    </div>
-                    <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0">
-                      <Users className="w-4 h-4 text-gray-600" />
-                    </div>
-                  </div>
-                  
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="bg-blue-50 rounded-lg p-3 flex-1">
-                      <p className="text-sm text-gray-800">Of course! Our pricing starts at $29/month for the Basic plan, which includes 3 AI agents and 1,000 messages per month. Would you like me to tell you about our other plans?</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* Chatbot demo removed as requested */}
       </div>
       
       {/* Background decorations */}
